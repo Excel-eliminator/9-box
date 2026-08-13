@@ -491,30 +491,24 @@ def main():
             def_x_low, def_x_high = 66.67, 133.33
             robust_avg_x, avg_margin_pct = 100.0, 25.0
             plot_x_min, plot_x_max, plot_y_min, plot_y_max = -5, 200, -20, 50
-
         with st.form("threshold_form"):
-            st.info(
-                "💡 **INFO:** Sumbu X dan Y menggunakan nilai Rata-Rata sebagai titik tengah mutlak. Garis Rata-rata ditandai dengan warna Merah. Garis Threshold Atas dan Bawah otomatis disesuaikan secara simetris terhadap Rata-rata.")
-
-            form_key_suffix = f"{market_filter}_{margin_selector}_{x_axis_selector}"
-            step_x_input = float(abs(def_x_high - def_x_low) / 2) if def_x_high != def_x_low else 1.0
-
+            st.info("💡 **INFO:** Sumbu X dan Y menggunakan nilai Rata-Rata sebagai titik tengah mutlak. Garis Rata-rata ditandai dengan warna Merah.")
+            
+            form_key_suffix = f"{market_filter}_{margin_selector}_{x_axis_selector}_{def_x_low}" # Tambahin def_x_low biar key-nya ikut mereset kalau rata-rata berubah!
+            step_x_input = float(abs(def_x_high - def_x_low)/2) if def_x_high != def_x_low else 1.0
+            
             col_tx1, col_tx2, col_ty1, col_ty2 = st.columns(4)
             with col_tx1:
-                x_low_thresh_input = st.number_input(f"X-Axis Low to Med", value=float(def_x_low), step=step_x_input,
-                                                     key=f"xl_{form_key_suffix}")
+                x_low_thresh_input = st.number_input(f"X-Axis Low to Med", value=float(def_x_low), step=step_x_input, key=f"xl_{form_key_suffix}")
             with col_tx2:
-                x_high_thresh_input = st.number_input(f"X-Axis Med to High", value=float(def_x_high), step=step_x_input,
-                                                      key=f"xh_{form_key_suffix}")
+                x_high_thresh_input = st.number_input(f"X-Axis Med to High", value=float(def_x_high), step=step_x_input, key=f"xh_{form_key_suffix}")
             with col_ty1:
-                y_low_thresh_input = st.number_input("Y-Axis Low to Med (%)", value=float(def_y_low), step=1.0,
-                                                     key=f"yl_{form_key_suffix}")
+                y_low_thresh_input = st.number_input("Y-Axis Low to Med (%)", value=float(def_y_low), step=1.0, key=f"yl_{form_key_suffix}")
             with col_ty2:
-                y_high_thresh_input = st.number_input("Y-Axis Med to High (%)", value=float(def_y_high), step=1.0,
-                                                      key=f"yh_{form_key_suffix}")
+                y_high_thresh_input = st.number_input("Y-Axis Med to High (%)", value=float(def_y_high), step=1.0, key=f"yh_{form_key_suffix}")
 
             run_thresholds = st.form_submit_button("▶ RUN & UPDATE MATRIX", type="primary")
-
+        
         y_low_thresh = float(y_low_thresh_input)
         y_high_thresh = float(y_high_thresh_input)
         x_low_thresh = float(x_low_thresh_input)
