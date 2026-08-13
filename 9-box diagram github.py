@@ -458,13 +458,7 @@ def main():
 
             if pd.isna(robust_avg_x) or robust_avg_x <= 0:
                 robust_avg_x = 100.0
-           
-            st.write("DEBUG INFO:", {
-                "Total Baris Data": len(filtered_df),
-                "Total Baris Tanpa Outlier": len(normal_x_df),
-                "Nilai Rata-rata X Asli": robust_avg_x
-            })
-             
+                
             def_x_low = robust_avg_x * (2.0 / 3.0)
             def_x_high = robust_avg_x * (4.0 / 3.0)
 
