@@ -18,7 +18,6 @@ st.set_page_config(page_title="Unified 9-Box Margin Analysis", layout="wide")
 # ==========================================
 # DATA LOADING FUNCTIONS
 # ==========================================
-@st.cache_data
 def load_9box_data(file_path):
     try:
         xls = pd.ExcelFile(file_path)
