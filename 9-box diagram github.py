@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import io
 import os
 import textwrap
+import hashlib
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
@@ -339,17 +340,17 @@ def main():
         st.warning(
             "⚠️ File tidak dapat dibaca atau formatnya salah. Pastikan file memiliki sheet 'LOCAL' dan 'EXPORT'.")
         st.stop()
-
+        
     df_main = df_raw.copy()
 
     # ---------------------------------------------------------
-    # SKU CONSOLIDATION VIEW TOGGLE
+    # SKU CONSOLIDATION VIEW TOGGLE 
     # ---------------------------------------------------------
     st.markdown("### 🔀 SKU Consolidation View")
     view_mode = st.radio(
         "Select Data Granularity:",
         [
-            "Uncommon (Original Granular SKUs)",
+            "Uncommon (Original Granular SKUs)", 
             "Common (Consolidated Master SKUs)",
             "Commonized Only (Master C- Prefix SKUs)",
             "Uncommonized Only (Granular C- Prefix SKUs)"
@@ -366,13 +367,13 @@ def main():
 
             # Columns required for grouping
             group_cols = ['Source_Sheet', 'New Code', 'New Product Name']
-
+            
             # Identify numeric columns for summation
             num_cols = df_main.select_dtypes(include=[np.number]).columns.tolist()
             sum_cols = [c for c in num_cols if not c.endswith('(%)')]
-
+            
             agg_dict = {c: 'sum' for c in sum_cols}
-
+            
             # Carry over categorical columns
             cat_cols = ['Remark', 'Status', 'Country']
             for cat in cat_cols:
@@ -389,28 +390,23 @@ def main():
                     ((df_main['Qty (Current)'] - df_main['Qty (Previous)']) / df_main['Qty (Previous)'].abs()) * 100,
                     0.0
                 )
-
+            
             if 'Gross Sales (Current)' in df_main.columns:
                 sales = df_main['Gross Sales (Current)']
                 if 'Gross Profit (Current)' in df_main.columns:
-                    df_main['Gross Profit (%)'] = np.where(sales > 0, (df_main['Gross Profit (Current)'] / sales) * 100,
-                                                           np.where(df_main['Gross Profit (Current)'] < 0, -100.0, 0.0))
+                    df_main['Gross Profit (%)'] = np.where(sales > 0, (df_main['Gross Profit (Current)'] / sales) * 100, np.where(df_main['Gross Profit (Current)'] < 0, -100.0, 0.0))
                 if 'Gross Margin (Current)' in df_main.columns:
-                    df_main['Gross Margin (%)'] = np.where(sales > 0, (df_main['Gross Margin (Current)'] / sales) * 100,
-                                                           np.where(df_main['Gross Margin (Current)'] < 0, -100.0, 0.0))
+                    df_main['Gross Margin (%)'] = np.where(sales > 0, (df_main['Gross Margin (Current)'] / sales) * 100, np.where(df_main['Gross Margin (Current)'] < 0, -100.0, 0.0))
                 if 'Contribution Margin (Current)' in df_main.columns:
-                    df_main['Contribution Margin (%)'] = np.where(sales > 0, (
-                                df_main['Contribution Margin (Current)'] / sales) * 100,
-                                                                  np.where(df_main['Contribution Margin (Current)'] < 0,
-                                                                           -100.0, 0.0))
+                    df_main['Contribution Margin (%)'] = np.where(sales > 0, (df_main['Contribution Margin (Current)'] / sales) * 100, np.where(df_main['Contribution Margin (Current)'] < 0, -100.0, 0.0))
 
             # Replace Product Name with Master Name
             df_main['Product Name'] = df_main['New Product Name']
-
+            
             # --- COMMONIZED ONLY FILTER ---
             if view_mode == "Commonized Only (Master C- Prefix SKUs)":
                 df_main = df_main[df_main['Product Name'].str.startswith('C-', na=False)]
-
+            
         else:
             st.warning("⚠️ Columns 'New Code' and 'New Product Name' are missing in the uploaded dataset.")
 
@@ -425,8 +421,8 @@ def main():
     st.markdown("---")
 
     tab_main_matrix, tab_b3_intersection, tab_progress = st.tabs([
-        "📈 MAIN 9-BOX ANALYSIS",
-        "⚠️ BOX 3 DEEP DIVE",
+        "📈 MAIN 9-BOX ANALYSIS", 
+        "⚠️ BOX 3 DEEP DIVE", 
         "📉 RATIONALIZATION PROGRESS"
     ])
 
@@ -435,7 +431,7 @@ def main():
     # ---------------------------------------------------------
     with tab_main_matrix:
         st.markdown("### 🔍 Filter & Metric Configuration")
-
+        
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -458,7 +454,7 @@ def main():
             )
 
         col4, col5, col6, col7 = st.columns(4)
-
+        
         with col4:
             bubble_size_selector = st.selectbox(
                 "Bubble Size Metric:",
@@ -483,7 +479,7 @@ def main():
                 status_options = ["ALL"] + valid_statuses
             else:
                 status_options = ["ALL"]
-
+                
             status_filter = st.multiselect("Select Status(es):", status_options, default=["ALL"])
 
         with col7:
@@ -502,7 +498,7 @@ def main():
         x_col = x_axis_selector
 
         filtered_df = df_main.copy()
-
+        
         if market_filter != "ALL (Local + Export)":
             filtered_df = filtered_df[filtered_df['Source_Sheet'] == market_filter]
 
@@ -599,22 +595,23 @@ def main():
             st.info(
                 "💡 **INFO:** Sumbu X dan Y menggunakan nilai Rata-Rata sebagai titik tengah mutlak. Garis Rata-rata ditandai dengan warna Merah. Garis Threshold Atas dan Bawah otomatis disesuaikan secara simetris terhadap Rata-rata.")
 
-            form_key_suffix = f"{market_filter}_{margin_selector}_{x_axis_selector}"
+            # --- PERBAIKAN STUBBORN CACHE DI SINI ---
+            # Kita hash semua konfigurasi filter jadi satu key unik.
+            # Tiap kali user ganti dropdown/filter, key-nya berubah, dan angka default bakal keriset ikutin hitungan terbaru!
+            filter_state_str = f"{view_mode}_{market_filter}_{margin_selector}_{x_axis_selector}_{remark_filter}_{status_filter}_{sku_search}_{min_outlier_limit_x}"
+            form_key_suffix = hashlib.md5(filter_state_str.encode('utf-8')).hexdigest()
+
             step_x_input = float(abs(def_x_high - def_x_low) / 2) if def_x_high != def_x_low else 1.0
 
             col_tx1, col_tx2, col_ty1, col_ty2 = st.columns(4)
             with col_tx1:
-                x_low_thresh_input = st.number_input(f"X-Axis Low to Med", value=float(def_x_low), step=step_x_input,
-                                                     key=f"xl_{form_key_suffix}")
+                x_low_thresh_input = st.number_input(f"X-Axis Low to Med", value=float(def_x_low), step=step_x_input, key=f"xl_{form_key_suffix}")
             with col_tx2:
-                x_high_thresh_input = st.number_input(f"X-Axis Med to High", value=float(def_x_high), step=step_x_input,
-                                                      key=f"xh_{form_key_suffix}")
+                x_high_thresh_input = st.number_input(f"X-Axis Med to High", value=float(def_x_high), step=step_x_input, key=f"xh_{form_key_suffix}")
             with col_ty1:
-                y_low_thresh_input = st.number_input("Y-Axis Low to Med (%)", value=float(def_y_low), step=1.0,
-                                                     key=f"yl_{form_key_suffix}")
+                y_low_thresh_input = st.number_input("Y-Axis Low to Med (%)", value=float(def_y_low), step=1.0, key=f"yl_{form_key_suffix}")
             with col_ty2:
-                y_high_thresh_input = st.number_input("Y-Axis Med to High (%)", value=float(def_y_high), step=1.0,
-                                                      key=f"yh_{form_key_suffix}")
+                y_high_thresh_input = st.number_input("Y-Axis Med to High (%)", value=float(def_y_high), step=1.0, key=f"yh_{form_key_suffix}")
 
             run_thresholds = st.form_submit_button("▶ RUN & UPDATE MATRIX", type="primary")
 
@@ -722,7 +719,7 @@ def main():
 
             hover_data_dict = {
                 'Source_Sheet': True if 'Source_Sheet' in plot_df.columns else False,
-                'Dynamic 9-Box Category': True,
+                'Dynamic 9-Box Category': True, 
                 'Plot_Color_Category': False,
                 y_col: ':.2f',
                 x_col: x_format,
@@ -880,26 +877,22 @@ def main():
             # ---------------------------------------------------------
             st.markdown("---")
             st.subheader("📥 Interactive 9-Box Quick Export")
-            st.info(
-                "💡 **Quick Action:** Klik tombol di bawah ini untuk langsung men-download isi dari masing-masing Box. Angka finansial diekspor murni sebagai *Raw Numbers* (agar bisa di-SUM di Excel), sementara kode produk dan teks lainnya dijamin aman sebagai String.")
-
+            st.info("💡 **Quick Action:** Klik tombol di bawah ini untuk langsung men-download isi dari masing-masing Box. Angka finansial diekspor murni sebagai *Raw Numbers* (agar bisa di-SUM di Excel), sementara kode produk dan teks lainnya dijamin aman sebagai String.")
+            
             def get_raw_excel(df_in):
                 # Buang kolom teknis dari Plotly agar rapi persis seperti tabel "Data Detail & Export"
-                df_out = df_in.drop(
-                    columns=['Bubble_Size', 'X_Plot', 'Y_Plot', 'Plot_Color_Category', 'Dynamic 9-Box Category'],
-                    errors='ignore').copy()
-
+                df_out = df_in.drop(columns=['Bubble_Size', 'X_Plot', 'Y_Plot', 'Plot_Color_Category', 'Dynamic 9-Box Category'], errors='ignore').copy()
+                
                 # Pastikan kolom bertipe teks tetap dibaca string oleh Excel (mencegah auto-convert kode produk jadi angka)
-                text_cols = ['SKU', 'Product Name', 'New Code', 'New Product Name', 'Remark', 'Status', 'Country',
-                             'Source_Sheet']
+                text_cols = ['SKU', 'Product Name', 'New Code', 'New Product Name', 'Remark', 'Status', 'Country', 'Source_Sheet']
                 for col in text_cols:
                     if col in df_out.columns:
                         df_out[col] = df_out[col].astype(str)
-
+                
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                     df_out.to_excel(writer, index=False, sheet_name='Box_Export')
-
+                    
                     # Auto-adjust column width for neatness di Excel
                     worksheet = writer.sheets['Box_Export']
                     for col in worksheet.columns:
@@ -913,7 +906,7 @@ def main():
                                 pass
                         adjusted_width = (max_length + 2)
                         worksheet.column_dimensions[column].width = adjusted_width
-
+                        
                 return buffer.getvalue()
 
             grid_col1, grid_col2, grid_col3 = st.columns(3)
@@ -942,6 +935,7 @@ def main():
                     else:
                         st.button(f"📥 {label} (0 SKUs)", disabled=True, use_container_width=True)
 
+
             # ---------------------------------------------------------
             # DATA DETAIL TABLE & EXPORT
             # ---------------------------------------------------------
@@ -950,8 +944,7 @@ def main():
             with col_hdr1:
                 st.subheader("📋 Data Detail & Export")
 
-            display_df = filtered_df.drop(columns=['Bubble_Size', 'X_Plot', 'Y_Plot', 'Plot_Color_Category'],
-                                          errors='ignore')
+            display_df = filtered_df.drop(columns=['Bubble_Size', 'X_Plot', 'Y_Plot', 'Plot_Color_Category'], errors='ignore')
 
             buffer_excel_main = io.BytesIO()
             with pd.ExcelWriter(buffer_excel_main, engine='openpyxl') as writer:
@@ -1131,7 +1124,7 @@ def main():
                         )
 
                     fig_pareto = go.Figure()
-
+                    
                     # Logika warna bar Pareto: Hitam untuk SKU Commonized, Merah untuk Minus, Biru untuk Normal
                     bar_colors = []
                     for i, row in df_pareto_filtered.iterrows():
@@ -1140,13 +1133,13 @@ def main():
                             matches = filtered_df[filtered_df[name_col] == row[name_col]]
                             if not matches.empty:
                                 npm = str(matches.iloc[0]['New Product Name'])
-
+                        
                         if npm.startswith('C-'):
-                            bar_colors.append('#000000')  # Warna Hitam Pekat untuk SKU Commonized
+                            bar_colors.append('#000000') # Warna Hitam Pekat untuk SKU Commonized
                         elif row[chart_margin_col] < 0:
-                            bar_colors.append('#c03d32')  # Merah
+                            bar_colors.append('#c03d32') # Merah
                         else:
-                            bar_colors.append('#38bdf8')  # Biru
+                            bar_colors.append('#38bdf8') # Biru
 
                     fig_pareto.add_trace(go.Bar(
                         x=df_pareto_filtered[name_col],
@@ -1262,8 +1255,7 @@ def main():
                             # Override the color for Commonized SKUs to Black
                             plot_df_p['Plot_Color_Category'] = plot_df_p['Dynamic 9-Box Category']
                             if 'New Product Name' in plot_df_p.columns:
-                                mask_commonized_p = plot_df_p['New Product Name'].fillna('').astype(str).str.startswith(
-                                    'C-')
+                                mask_commonized_p = plot_df_p['New Product Name'].fillna('').astype(str).str.startswith('C-')
                                 plot_df_p.loc[mask_commonized_p, 'Plot_Color_Category'] = 'Commonized SKU (Black)'
 
                             hover_data_dict_p = hover_data_dict.copy()
@@ -1312,8 +1304,7 @@ def main():
                                     fig_p.add_annotation(
                                         x=coords['x'],
                                         y=coords['y'],
-                                        ax=mapped_x_high + (
-                                                    mapped_plot_x_max - mapped_x_high) * 0.05 if is_b5 else None,
+                                        ax=mapped_x_high + (mapped_plot_x_max - mapped_x_high) * 0.05 if is_b5 else None,
                                         ay=mid_y_low if is_b5 else None,
                                         axref="x" if is_b5 else None,
                                         ayref="y" if is_b5 else None,
@@ -1588,11 +1579,11 @@ def main():
     # ---------------------------------------------------------
     with tab_progress:
         st.markdown("### 📉 SKU Rationalization Progress Monitor")
-
+        
         # --- PERHITUNGAN DINAMIS DARI SUMBER DATA MENTAH (df_raw) ---
         # 1. Pastikan P1 dan P2 SELALU dari data UNCOMMON (Original Granular)
         df_uncommon = df_raw.copy()
-
+        
         def get_sum(df, col):
             return df[col].sum() if col in df.columns else 0
 
@@ -1610,7 +1601,7 @@ def main():
             df_p2 = df_uncommon[~mask_exc]
         else:
             df_p2 = df_uncommon.copy()
-
+            
         p2_sku = len(df_p2)
         p2_sales = get_sum(df_p2, 'Gross Sales (Current)')
         p2_gm = get_sum(df_p2, 'Gross Margin (Current)')
@@ -1620,16 +1611,16 @@ def main():
         df_p3_raw = df_uncommon.copy()
         if 'Status' in df_p3_raw.columns:
             df_p3_raw = df_p3_raw[df_p3_raw['Status'].astype(str).str.strip().str.upper() == 'ACTIVE']
-
+        
         # Lakukan commonization (Grouping Master SKU) KHUSUS untuk P3
         if 'New Code' in df_p3_raw.columns and 'New Product Name' in df_p3_raw.columns:
             df_p3_raw['New Code'] = df_p3_raw['New Code'].fillna('UNKNOWN').astype(str)
             df_p3_raw['New Product Name'] = df_p3_raw['New Product Name'].fillna('UNKNOWN').astype(str)
-
+            
             group_cols_p3 = ['Source_Sheet', 'New Code', 'New Product Name']
             num_cols_p3 = df_p3_raw.select_dtypes(include=[np.number]).columns.tolist()
             sum_cols_p3 = [c for c in num_cols_p3 if not c.endswith('(%)')]
-
+            
             agg_dict_p3 = {c: 'sum' for c in sum_cols_p3}
             df_p3_common = df_p3_raw.groupby(group_cols_p3, as_index=False).agg(agg_dict_p3)
         else:
@@ -1645,10 +1636,10 @@ def main():
             'Phase': ['P1 (Initial Base)', 'P2 (First Optimization)', 'P3 (Current Trim)'],
             'Jumlah SKU': [p1_sku, p2_sku, p3_sku],
             'Gross Sales (IDR)': [p1_sales, p2_sales, p3_sales],
-            'Gross Margin (IDR)': [p1_gm, p2_gm, p3_gm],
-            'Contribution Margin (IDR)': [p1_cm, p2_cm, p3_cm]
+            'Gross Margin (IDR)': [p1_gm, p2_gm, p3_gm],    
+            'Contribution Margin (IDR)': [p1_cm, p2_cm, p3_cm] 
         })
-
+        
         # Helper untuk formatting tabel pakai koma sebagai ribuan
         def format_id_rupiah(val):
             return f"{int(val):,}"
@@ -1657,68 +1648,66 @@ def main():
         display_progress_df['Jumlah SKU'] = display_progress_df['Jumlah SKU'].apply(format_id_rupiah)
         display_progress_df['Gross Sales (IDR)'] = display_progress_df['Gross Sales (IDR)'].apply(format_id_rupiah)
         display_progress_df['Gross Margin (IDR)'] = display_progress_df['Gross Margin (IDR)'].apply(format_id_rupiah)
-        display_progress_df['Contribution Margin (IDR)'] = display_progress_df['Contribution Margin (IDR)'].apply(
-            format_id_rupiah)
+        display_progress_df['Contribution Margin (IDR)'] = display_progress_df['Contribution Margin (IDR)'].apply(format_id_rupiah)
 
         st.dataframe(display_progress_df, use_container_width=True, hide_index=True)
-
+        
         progress_metric = st.selectbox(
             "Select Tracking Metric for Y-Axis:",
             ["Jumlah SKU", "Gross Sales (IDR)", "Gross Margin (IDR)", "Contribution Margin (IDR)"]
         )
-
+        
         # Distinct Corporate Palette (Corporate Navy, Executive Amber, Strategy Teal)
         executive_colors = ['#1e3a8a', '#d97706', '#0f766e']
-
+        
         # Rendering the Chart using Numeric values (Plotly handles the formatting via separators)
         fig_prog = px.bar(
             progress_data_numeric,
             x='Phase',
             y=progress_metric,
             color='Phase',
-            color_discrete_sequence=executive_colors,
+            color_discrete_sequence=executive_colors, 
             title=f"<b>RATIONALIZATION LIFECYCLE: {progress_metric.upper()}</b>"
         )
-
+        
         if progress_metric == "Jumlah SKU":
             fig_prog.update_traces(
-                texttemplate='<b>%{y:,.0f} SKUs</b>',
-                textposition='outside',
+                texttemplate='<b>%{y:,.0f} SKUs</b>', 
+                textposition='outside', 
                 textfont=dict(size=16, color='#0f172a'),
                 width=0.55, marker_line_width=0
             )
         else:
             fig_prog.update_traces(
-                texttemplate='<b>Rp %{y:,.0f}</b>',
-                textposition='outside',
+                texttemplate='<b>Rp %{y:,.0f}</b>', 
+                textposition='outside', 
                 textfont=dict(size=16, color='#0f172a'),
                 width=0.55, marker_line_width=0
             )
-
+            
         fig_prog.update_layout(
-            separators=",.",  # Force Plotly to use dot (.) as thousands separator and comma (,) as decimal
+            separators=",.", # Force Plotly to use dot (.) as thousands separator and comma (,) as decimal
             plot_bgcolor='white',
             paper_bgcolor='white',
             showlegend=False,
             yaxis=dict(
-                showgrid=True, gridcolor='#f1f5f9',
-                showline=False, showticklabels=False, title=""
+                showgrid=True, gridcolor='#f1f5f9', 
+                showline=False, showticklabels=False, title="" 
             ),
             xaxis=dict(
-                showgrid=False, showline=True, linewidth=2, linecolor='#334155',
+                showgrid=False, showline=True, linewidth=2, linecolor='#334155', 
                 title="", tickfont=dict(size=14, color='#334155', family="Arial")
             ),
             title_font=dict(size=22, color='#0f172a', family="Arial"),
             margin=dict(t=80, b=40, l=40, r=40),
             height=500
         )
-
+        
         # Ensure Y-axis range is high enough so outside text doesn't get clipped
         max_y = progress_data_numeric[progress_metric].max()
         fig_prog.update_yaxes(range=[0, max_y * 1.2])
 
         st.plotly_chart(fig_prog, use_container_width=True)
-
 
 if __name__ == "__main__":
     main()
