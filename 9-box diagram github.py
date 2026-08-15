@@ -349,17 +349,17 @@ def main():
         st.warning(
             "⚠️ File tidak dapat dibaca atau formatnya salah. Pastikan file memiliki sheet 'LOCAL' dan 'EXPORT'.")
         st.stop()
-        
+
     df_main = df_raw.copy()
 
     # ---------------------------------------------------------
-    # SKU CONSOLIDATION VIEW TOGGLE 
+    # SKU CONSOLIDATION VIEW TOGGLE
     # ---------------------------------------------------------
     st.markdown("### 🔀 SKU Consolidation View")
     view_mode = st.radio(
         "Select Data Granularity:",
         [
-            "Uncommon (Original Granular SKUs)", 
+            "Uncommon (Original Granular SKUs)",
             "Common (Consolidated Master SKUs)",
             "Commonized Only (Master C- Prefix SKUs)",
             "Uncommonized Only (Granular C- Prefix SKUs)"
@@ -368,7 +368,7 @@ def main():
         help="Switch to 'Common' to group data by Master SKU. Choose 'Commonized Only' for merged items, or 'Uncommonized Only' to see the original granular details of those merged items."
     )
 
-    # Grouping Logic for "Common" and "Commonized Only" views
+    # Grouping Logic for "Common" and "Commonized Only" views (PENGELOMPOKAN SAJA, FILTER ISOLASI DILAKUKAN DI AKHIR)
     if view_mode in ["Common (Consolidated Master SKUs)", "Commonized Only (Master C- Prefix SKUs)"]:
         if 'New Code' in df_main.columns and 'New Product Name' in df_main.columns:
             df_main['New Code'] = df_main['New Code'].astype(str)
@@ -376,13 +376,13 @@ def main():
 
             # Columns required for grouping
             group_cols = ['Source_Sheet', 'New Code', 'New Product Name']
-            
+
             # Identify numeric columns for summation
             num_cols = df_main.select_dtypes(include=[np.number]).columns.tolist()
             sum_cols = [c for c in num_cols if not c.endswith('(%)')]
-            
+
             agg_dict = {c: 'sum' for c in sum_cols}
-            
+
             # Carry over categorical columns
             cat_cols = ['Remark', 'Status', 'Country']
             for cat in cat_cols:
@@ -399,39 +399,32 @@ def main():
                     ((df_main['Qty (Current)'] - df_main['Qty (Previous)']) / df_main['Qty (Previous)'].abs()) * 100,
                     0.0
                 )
-            
+
             if 'Gross Sales (Current)' in df_main.columns:
                 sales = df_main['Gross Sales (Current)']
                 if 'Gross Profit (Current)' in df_main.columns:
-                    df_main['Gross Profit (%)'] = np.where(sales > 0, (df_main['Gross Profit (Current)'] / sales) * 100, np.where(df_main['Gross Profit (Current)'] < 0, -100.0, 0.0))
+                    df_main['Gross Profit (%)'] = np.where(sales > 0, (df_main['Gross Profit (Current)'] / sales) * 100,
+                                                           np.where(df_main['Gross Profit (Current)'] < 0, -100.0, 0.0))
                 if 'Gross Margin (Current)' in df_main.columns:
-                    df_main['Gross Margin (%)'] = np.where(sales > 0, (df_main['Gross Margin (Current)'] / sales) * 100, np.where(df_main['Gross Margin (Current)'] < 0, -100.0, 0.0))
+                    df_main['Gross Margin (%)'] = np.where(sales > 0, (df_main['Gross Margin (Current)'] / sales) * 100,
+                                                           np.where(df_main['Gross Margin (Current)'] < 0, -100.0, 0.0))
                 if 'Contribution Margin (Current)' in df_main.columns:
-                    df_main['Contribution Margin (%)'] = np.where(sales > 0, (df_main['Contribution Margin (Current)'] / sales) * 100, np.where(df_main['Contribution Margin (Current)'] < 0, -100.0, 0.0))
+                    df_main['Contribution Margin (%)'] = np.where(sales > 0, (
+                                df_main['Contribution Margin (Current)'] / sales) * 100,
+                                                                  np.where(df_main['Contribution Margin (Current)'] < 0,
+                                                                           -100.0, 0.0))
 
             # Replace Product Name with Master Name
             df_main['Product Name'] = df_main['New Product Name']
             
-            # --- COMMONIZED ONLY FILTER ---
-            if view_mode == "Commonized Only (Master C- Prefix SKUs)":
-                df_main = df_main[df_main['Product Name'].str.startswith('C-', na=False)]
-            
         else:
             st.warning("⚠️ Columns 'New Code' and 'New Product Name' are missing in the uploaded dataset.")
-
-    # Filtering Logic for "Uncommonized Only" view (Keeps data Granular)
-    elif view_mode == "Uncommonized Only (Granular C- Prefix SKUs)":
-        if 'New Product Name' in df_main.columns:
-            # Hanya tampilkan data granular yang New Product Name-nya berawalan "C-"
-            df_main = df_main[df_main['New Product Name'].astype(str).str.startswith('C-')]
-        else:
-            st.warning("⚠️ Column 'New Product Name' is missing in the uploaded dataset.")
 
     st.markdown("---")
 
     tab_main_matrix, tab_b3_intersection, tab_progress = st.tabs([
-        "📈 MAIN 9-BOX ANALYSIS", 
-        "⚠️ BOX 3 DEEP DIVE", 
+        "📈 MAIN 9-BOX ANALYSIS",
+        "⚠️ BOX 3 DEEP DIVE",
         "📉 RATIONALIZATION PROGRESS"
     ])
 
@@ -440,7 +433,7 @@ def main():
     # ---------------------------------------------------------
     with tab_main_matrix:
         st.markdown("### 🔍 Filter & Metric Configuration")
-        
+
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -463,13 +456,13 @@ def main():
             )
 
         col4, col5, col6, col7 = st.columns(4)
-        
+
         with col4:
             bubble_size_selector = st.selectbox(
                 "Bubble Size Metric:",
                 ["Gross Sales (Current)", "Gross Profit (Current)", "Gross Margin (Current)",
                  "Contribution Margin (Current)", "Qty (Current)"],
-                index=4 # Default diubah ke Qty (Current) agar sesuai ekspektasi
+                index=4 # Default Qty (Current)
             )
 
         with col5:
@@ -489,7 +482,7 @@ def main():
                 status_options = ["ALL"] + valid_statuses
             else:
                 status_options = ["ALL"]
-                
+
             status_filter = st.multiselect("Select Status(es):", status_options, default=["ALL"])
 
         with col7:
@@ -508,7 +501,7 @@ def main():
         x_col = x_axis_selector
 
         filtered_df = df_main.copy()
-        
+
         if market_filter != "ALL (Local + Export)":
             filtered_df = filtered_df[filtered_df['Source_Sheet'] == market_filter]
 
@@ -550,6 +543,7 @@ def main():
                 help="Set ke 1.0 untuk melihat grafik asli (bisa gepeng jika ada outlier). Set < 1.0 (misal 0.2 atau 0.1) untuk mengecilkan visual box kanan (B7,8,9) agar box kiri dan tengah mendapat porsi ruang layar lebih luas tanpa menyembunyikan SKU apa pun."
             )
 
+        # MENGHITUNG THRESHOLD BERDASARKAN POPULASI INDUK (BELUM DI-ISOLASI)
         if not filtered_df.empty:
             positive_df = filtered_df[filtered_df[margin_val_col] >= 0]
             total_sales_pos = positive_df['Gross Sales (Current)'].sum()
@@ -605,8 +599,10 @@ def main():
             st.info(
                 "💡 **INFO:** Sumbu X dan Y menggunakan nilai Rata-Rata sebagai titik tengah mutlak. Garis Rata-rata ditandai dengan warna Merah. Garis Threshold Atas dan Bawah otomatis disesuaikan secara simetris terhadap Rata-rata.")
 
-            # HASH KEY UNTUK MENGAKALI CACHE FORM INPUT
-            filter_state_str = f"{view_mode}_{market_filter}_{margin_selector}_{x_axis_selector}_{remark_filter}_{status_filter}_{sku_search}_{min_outlier_limit_x}"
+            # HASH KEY UNTUK MENGAKALI CACHE FORM INPUT (MENGGUNAKAN PARENT VIEW)
+            # Ini memastikan kalau user toggle ke "Only", input batas manual dari parent tetap terbaca sempurna
+            parent_view_mode = "Common" if view_mode in ["Common (Consolidated Master SKUs)", "Commonized Only (Master C- Prefix SKUs)"] else "Uncommon"
+            filter_state_str = f"{parent_view_mode}_{market_filter}_{margin_selector}_{x_axis_selector}_{remark_filter}_{status_filter}_{sku_search}_{min_outlier_limit_x}"
             form_key_suffix = hashlib.md5(filter_state_str.encode('utf-8')).hexdigest()
 
             step_x_input = float(abs(def_x_high - def_x_low) / 2) if def_x_high != def_x_low else 1.0
@@ -648,6 +644,7 @@ def main():
             b8_id = f'Box 8 (Med Margin, {x_lbl_high})'
             b9_id = f'Box 9 (Low Margin, {x_lbl_high})'
 
+            # PENENTUAN KATEGORI BOX 1-9 DILAKUKAN SEBELUM FILTER ISOLASI
             conditions_9box = [
                 (filtered_df[y_col] > y_high_thresh) & (filtered_df[x_col] < x_low_thresh),
                 (filtered_df[y_col] >= y_low_thresh) & (filtered_df[y_col] <= y_high_thresh) & (
@@ -672,6 +669,16 @@ def main():
             filtered_df['Dynamic 9-Box Category'] = np.select(
                 conditions_9box, choices_9box, default=b6_id
             )
+
+            # ==========================================
+            # THE MAGIC: ISOLATION FILTER (MIRRORING)
+            # ==========================================
+            # Diterapkan SETELAH sumbu, batas outlier, rata-rata, dan kategori Box dihitung oleh Parent!
+            if view_mode == "Commonized Only (Master C- Prefix SKUs)":
+                filtered_df = filtered_df[filtered_df['Product Name'].fillna('').astype(str).str.startswith('C-')]
+            elif view_mode == "Uncommonized Only (Granular C- Prefix SKUs)":
+                if 'New Product Name' in filtered_df.columns:
+                    filtered_df = filtered_df[filtered_df['New Product Name'].fillna('').astype(str).str.startswith('C-')]
 
             render_9box_summary_grid(filtered_df, margin_selector, margin_val_col, y_low_thresh, y_high_thresh,
                                      x_axis_selector, x_low_thresh, x_high_thresh)
@@ -772,6 +779,7 @@ def main():
                           annotation_text=f"AVG Y ({avg_margin_pct:.1f}%)", annotation_position="top right",
                           annotation_font_color="red")
 
+            # BOUNDARY MATI KUTU BERDASARKAN PARENT DATAFRAME
             mapped_plot_x_min = apply_custom_x_scale(plot_x_min)
             mapped_plot_x_max = apply_custom_x_scale(plot_x_max)
             mapped_x_low = apply_custom_x_scale(x_low_thresh)
