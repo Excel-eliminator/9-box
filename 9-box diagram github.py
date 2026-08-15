@@ -19,7 +19,7 @@ st.set_page_config(page_title="Unified 9-Box Margin Analysis", layout="wide")
 # ==========================================
 # DATA LOADING FUNCTIONS
 # ==========================================
-@st.cache_data
+# @st.cache_data -> DIHAPUS agar Streamlit selalu membaca data dari awal (100% fresh, no stubborn cache)
 def load_9box_data(file_path):
     try:
         xls = pd.ExcelFile(file_path)
@@ -333,7 +333,7 @@ def main():
     if uploaded_file is None:
         st.stop()
 
-    # Load and preserve the raw data universally
+    # Load and preserve the raw data universally (Cache has been destroyed!)
     df_raw = load_9box_data(uploaded_file)
 
     if df_raw.empty:
@@ -595,9 +595,7 @@ def main():
             st.info(
                 "💡 **INFO:** Sumbu X dan Y menggunakan nilai Rata-Rata sebagai titik tengah mutlak. Garis Rata-rata ditandai dengan warna Merah. Garis Threshold Atas dan Bawah otomatis disesuaikan secara simetris terhadap Rata-rata.")
 
-            # --- PERBAIKAN STUBBORN CACHE DI SINI ---
-            # Kita hash semua konfigurasi filter jadi satu key unik.
-            # Tiap kali user ganti dropdown/filter, key-nya berubah, dan angka default bakal keriset ikutin hitungan terbaru!
+            # HASH KEY UNTUK MENGAKALI CACHE FORM INPUT
             filter_state_str = f"{view_mode}_{market_filter}_{margin_selector}_{x_axis_selector}_{remark_filter}_{status_filter}_{sku_search}_{min_outlier_limit_x}"
             form_key_suffix = hashlib.md5(filter_state_str.encode('utf-8')).hexdigest()
 
