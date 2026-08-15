@@ -31,12 +31,13 @@ def load_9box_data(file_path):
 
         df_combined = pd.concat([df_local, df_export], ignore_index=True)
 
-        # Standardize numeric columns
+        # Standardize numeric columns - MARGIN DIAMBIL MURNI DARI EXCEL TANPA DIUBAH!
         numeric_cols = [
             'Gross Sales (Current)', 'Return (Current)', 'COGS_Regular (Current)', 'Royalty (Current)',
-            'Gross Profit (Current)', 'Contribution Margin (Current)',
+            'Gross Profit (Current)', 'Gross Margin (Current)', 'Contribution Margin (Current)',
+            'Gross Profit (%)', 'Gross Margin (%)', 'Contribution Margin (%)',
             'Qty (Current)', 'Gross Sales (Previous)', 'Qty (Previous)',
-            'Amount FG', 'Amount Material'
+            'Qty Growth (%)', 'Amount FG', 'Amount Material'
         ]
         for col in numeric_cols:
             if col in df_combined.columns:
@@ -48,40 +49,18 @@ def load_9box_data(file_path):
             if col in df_combined.columns:
                 df_combined[col] = df_combined[col].fillna('').astype(str)
 
-        # Initial calculation for the Uncommon (Original) view
-        if 'Qty Growth (%)' in df_combined.columns:
-            df_combined['Qty Growth (%)'] = pd.to_numeric(df_combined['Qty Growth (%)'], errors='coerce').fillna(0.0)
-        else:
+        # --- FALLBACK CALCULATION JIKA PERSENTASE TIDAK ADA DI EXCEL ---
+        if 'Qty Growth (%)' not in df_combined.columns:
             df_combined['Qty Growth (%)'] = 0.0
 
-        if 'Gross Sales (Current)' in df_combined.columns and 'Gross Profit (Current)' in df_combined.columns:
-            df_combined['Gross Profit (%)'] = np.where(
-                df_combined['Gross Sales (Current)'] > 0,
-                (df_combined['Gross Profit (Current)'] / df_combined['Gross Sales (Current)']) * 100,
-                np.where(df_combined['Gross Profit (Current)'] < 0, -100.0, 0.0)
-            )
+        if 'Gross Profit (%)' not in df_combined.columns and 'Gross Profit (Current)' in df_combined.columns and 'Gross Sales (Current)' in df_combined.columns:
+            df_combined['Gross Profit (%)'] = np.where(df_combined['Gross Sales (Current)'] > 0, (df_combined['Gross Profit (Current)'] / df_combined['Gross Sales (Current)']) * 100, 0.0)
 
-        if all(col in df_combined.columns for col in
-               ['Gross Sales (Current)', 'Return (Current)', 'COGS_Regular (Current)', 'Royalty (Current)']):
-            df_combined['Gross Margin (Current)'] = (
-                    df_combined['Gross Sales (Current)'] +
-                    df_combined['Return (Current)'] -
-                    df_combined['COGS_Regular (Current)'] -
-                    df_combined['Royalty (Current)']
-            )
+        if 'Gross Margin (%)' not in df_combined.columns and 'Gross Margin (Current)' in df_combined.columns and 'Gross Sales (Current)' in df_combined.columns:
+            df_combined['Gross Margin (%)'] = np.where(df_combined['Gross Sales (Current)'] > 0, (df_combined['Gross Margin (Current)'] / df_combined['Gross Sales (Current)']) * 100, 0.0)
 
-            df_combined['Gross Margin (%)'] = np.where(
-                df_combined['Gross Sales (Current)'] > 0,
-                (df_combined['Gross Margin (Current)'] / df_combined['Gross Sales (Current)']) * 100,
-                np.where(df_combined['Gross Margin (Current)'] < 0, -100.0, 0.0)
-            )
-
-        if 'Gross Sales (Current)' in df_combined.columns and 'Contribution Margin (Current)' in df_combined.columns:
-            df_combined['Contribution Margin (%)'] = np.where(
-                df_combined['Gross Sales (Current)'] > 0,
-                (df_combined['Contribution Margin (Current)'] / df_combined['Gross Sales (Current)']) * 100,
-                np.where(df_combined['Contribution Margin (Current)'] < 0, -100.0, 0.0)
-            )
+        if 'Contribution Margin (%)' not in df_combined.columns and 'Contribution Margin (Current)' in df_combined.columns and 'Gross Sales (Current)' in df_combined.columns:
+            df_combined['Contribution Margin (%)'] = np.where(df_combined['Gross Sales (Current)'] > 0, (df_combined['Contribution Margin (Current)'] / df_combined['Gross Sales (Current)']) * 100, 0.0)
 
         return df_combined
     except Exception as e:
@@ -333,7 +312,7 @@ def main():
     if uploaded_file is None:
         st.stop()
 
-    # Load and preserve the raw data universally (Cache has been destroyed!)
+    # Load and preserve the raw data universally
     df_raw = load_9box_data(uploaded_file)
 
     if df_raw.empty:
@@ -1577,11 +1556,11 @@ def main():
     # ---------------------------------------------------------
     with tab_progress:
         st.markdown("### 📉 SKU Rationalization Progress Monitor")
-        
+
         # --- PERHITUNGAN DINAMIS DARI SUMBER DATA MENTAH (df_raw) ---
         # 1. Pastikan P1 dan P2 SELALU dari data UNCOMMON (Original Granular)
         df_uncommon = df_raw.copy()
-        
+
         def get_sum(df, col):
             return df[col].sum() if col in df.columns else 0
 
@@ -1599,7 +1578,7 @@ def main():
             df_p2 = df_uncommon[~mask_exc]
         else:
             df_p2 = df_uncommon.copy()
-            
+
         p2_sku = len(df_p2)
         p2_sales = get_sum(df_p2, 'Gross Sales (Current)')
         p2_gm = get_sum(df_p2, 'Gross Margin (Current)')
@@ -1609,16 +1588,16 @@ def main():
         df_p3_raw = df_uncommon.copy()
         if 'Status' in df_p3_raw.columns:
             df_p3_raw = df_p3_raw[df_p3_raw['Status'].astype(str).str.strip().str.upper() == 'ACTIVE']
-        
+
         # Lakukan commonization (Grouping Master SKU) KHUSUS untuk P3
         if 'New Code' in df_p3_raw.columns and 'New Product Name' in df_p3_raw.columns:
             df_p3_raw['New Code'] = df_p3_raw['New Code'].fillna('UNKNOWN').astype(str)
             df_p3_raw['New Product Name'] = df_p3_raw['New Product Name'].fillna('UNKNOWN').astype(str)
-            
+
             group_cols_p3 = ['Source_Sheet', 'New Code', 'New Product Name']
             num_cols_p3 = df_p3_raw.select_dtypes(include=[np.number]).columns.tolist()
             sum_cols_p3 = [c for c in num_cols_p3 if not c.endswith('(%)')]
-            
+
             agg_dict_p3 = {c: 'sum' for c in sum_cols_p3}
             df_p3_common = df_p3_raw.groupby(group_cols_p3, as_index=False).agg(agg_dict_p3)
         else:
@@ -1634,10 +1613,10 @@ def main():
             'Phase': ['P1 (Initial Base)', 'P2 (First Optimization)', 'P3 (Current Trim)'],
             'Jumlah SKU': [p1_sku, p2_sku, p3_sku],
             'Gross Sales (IDR)': [p1_sales, p2_sales, p3_sales],
-            'Gross Margin (IDR)': [p1_gm, p2_gm, p3_gm],    
-            'Contribution Margin (IDR)': [p1_cm, p2_cm, p3_cm] 
+            'Gross Margin (IDR)': [p1_gm, p2_gm, p3_gm],
+            'Contribution Margin (IDR)': [p1_cm, p2_cm, p3_cm]
         })
-        
+
         # Helper untuk formatting tabel pakai koma sebagai ribuan
         def format_id_rupiah(val):
             return f"{int(val):,}"
@@ -1646,66 +1625,68 @@ def main():
         display_progress_df['Jumlah SKU'] = display_progress_df['Jumlah SKU'].apply(format_id_rupiah)
         display_progress_df['Gross Sales (IDR)'] = display_progress_df['Gross Sales (IDR)'].apply(format_id_rupiah)
         display_progress_df['Gross Margin (IDR)'] = display_progress_df['Gross Margin (IDR)'].apply(format_id_rupiah)
-        display_progress_df['Contribution Margin (IDR)'] = display_progress_df['Contribution Margin (IDR)'].apply(format_id_rupiah)
+        display_progress_df['Contribution Margin (IDR)'] = display_progress_df['Contribution Margin (IDR)'].apply(
+            format_id_rupiah)
 
         st.dataframe(display_progress_df, use_container_width=True, hide_index=True)
-        
+
         progress_metric = st.selectbox(
             "Select Tracking Metric for Y-Axis:",
             ["Jumlah SKU", "Gross Sales (IDR)", "Gross Margin (IDR)", "Contribution Margin (IDR)"]
         )
-        
+
         # Distinct Corporate Palette (Corporate Navy, Executive Amber, Strategy Teal)
         executive_colors = ['#1e3a8a', '#d97706', '#0f766e']
-        
+
         # Rendering the Chart using Numeric values (Plotly handles the formatting via separators)
         fig_prog = px.bar(
             progress_data_numeric,
             x='Phase',
             y=progress_metric,
             color='Phase',
-            color_discrete_sequence=executive_colors, 
+            color_discrete_sequence=executive_colors,
             title=f"<b>RATIONALIZATION LIFECYCLE: {progress_metric.upper()}</b>"
         )
-        
+
         if progress_metric == "Jumlah SKU":
             fig_prog.update_traces(
-                texttemplate='<b>%{y:,.0f} SKUs</b>', 
-                textposition='outside', 
+                texttemplate='<b>%{y:,.0f} SKUs</b>',
+                textposition='outside',
                 textfont=dict(size=16, color='#0f172a'),
                 width=0.55, marker_line_width=0
             )
         else:
             fig_prog.update_traces(
-                texttemplate='<b>Rp %{y:,.0f}</b>', 
-                textposition='outside', 
+                texttemplate='<b>Rp %{y:,.0f}</b>',
+                textposition='outside',
                 textfont=dict(size=16, color='#0f172a'),
                 width=0.55, marker_line_width=0
             )
-            
+
         fig_prog.update_layout(
-            separators=",.", # Force Plotly to use dot (.) as thousands separator and comma (,) as decimal
+            separators=",.",  # Force Plotly to use dot (.) as thousands separator and comma (,) as decimal
             plot_bgcolor='white',
             paper_bgcolor='white',
             showlegend=False,
             yaxis=dict(
-                showgrid=True, gridcolor='#f1f5f9', 
-                showline=False, showticklabels=False, title="" 
+                showgrid=True, gridcolor='#f1f5f9',
+                showline=False, showticklabels=False, title=""
             ),
             xaxis=dict(
-                showgrid=False, showline=True, linewidth=2, linecolor='#334155', 
+                showgrid=False, showline=True, linewidth=2, linecolor='#334155',
                 title="", tickfont=dict(size=14, color='#334155', family="Arial")
             ),
             title_font=dict(size=22, color='#0f172a', family="Arial"),
             margin=dict(t=80, b=40, l=40, r=40),
             height=500
         )
-        
+
         # Ensure Y-axis range is high enough so outside text doesn't get clipped
         max_y = progress_data_numeric[progress_metric].max()
         fig_prog.update_yaxes(range=[0, max_y * 1.2])
 
         st.plotly_chart(fig_prog, use_container_width=True)
+
 
 if __name__ == "__main__":
     main()
