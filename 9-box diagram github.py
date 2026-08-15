@@ -31,13 +31,12 @@ def load_9box_data(file_path):
 
         df_combined = pd.concat([df_local, df_export], ignore_index=True)
 
-        # Standardize numeric columns - MARGIN DIAMBIL MURNI DARI EXCEL TANPA DIUBAH!
+        # Standardize numeric columns (Cast ke numeric, isi 0 jika kosong)
         numeric_cols = [
             'Gross Sales (Current)', 'Return (Current)', 'COGS_Regular (Current)', 'Royalty (Current)',
-            'Gross Profit (Current)', 'Gross Margin (Current)', 'Contribution Margin (Current)',
-            'Gross Profit (%)', 'Gross Margin (%)', 'Contribution Margin (%)',
+            'Gross Profit (Current)', 'Contribution Margin (Current)',
             'Qty (Current)', 'Gross Sales (Previous)', 'Qty (Previous)',
-            'Qty Growth (%)', 'Amount FG', 'Amount Material'
+            'Amount FG', 'Amount Material'
         ]
         for col in numeric_cols:
             if col in df_combined.columns:
@@ -49,18 +48,49 @@ def load_9box_data(file_path):
             if col in df_combined.columns:
                 df_combined[col] = df_combined[col].fillna('').astype(str)
 
-        # --- FALLBACK CALCULATION JIKA PERSENTASE TIDAK ADA DI EXCEL ---
+        # --- MENGHITUNG NILAI YANG TIDAK ADA DI EXCEL ---
+        
+        # 1. Hitung Gross Margin (Current) & Gross Margin (%) karena tidak ada di raw data
+        # Rumus: Sales + Return (karena return sudah minus) - COGS - Royalty
+        if all(col in df_combined.columns for col in ['Gross Sales (Current)', 'Return (Current)', 'COGS_Regular (Current)', 'Royalty (Current)']):
+            df_combined['Gross Margin (Current)'] = (
+                df_combined['Gross Sales (Current)'] + 
+                df_combined['Return (Current)'] - 
+                df_combined['COGS_Regular (Current)'] - 
+                df_combined['Royalty (Current)']
+            )
+            
+            df_combined['Gross Margin (%)'] = np.where(
+                df_combined['Gross Sales (Current)'] > 0,
+                (df_combined['Gross Margin (Current)'] / df_combined['Gross Sales (Current)']) * 100,
+                np.where(df_combined['Gross Margin (Current)'] < 0, -100.0, 0.0)
+            )
+
+        # 2. Hitung Qty Growth (%)
         if 'Qty Growth (%)' not in df_combined.columns:
-            df_combined['Qty Growth (%)'] = 0.0
+            if 'Qty (Current)' in df_combined.columns and 'Qty (Previous)' in df_combined.columns:
+                df_combined['Qty Growth (%)'] = np.where(
+                    df_combined['Qty (Previous)'] != 0,
+                    ((df_combined['Qty (Current)'] - df_combined['Qty (Previous)']) / df_combined['Qty (Previous)'].abs()) * 100,
+                    0.0
+                )
+            else:
+                df_combined['Qty Growth (%)'] = 0.0
 
+        # 3. Hitung persentase untuk GP dan CM jika belum ada di excel
         if 'Gross Profit (%)' not in df_combined.columns and 'Gross Profit (Current)' in df_combined.columns and 'Gross Sales (Current)' in df_combined.columns:
-            df_combined['Gross Profit (%)'] = np.where(df_combined['Gross Sales (Current)'] > 0, (df_combined['Gross Profit (Current)'] / df_combined['Gross Sales (Current)']) * 100, 0.0)
-
-        if 'Gross Margin (%)' not in df_combined.columns and 'Gross Margin (Current)' in df_combined.columns and 'Gross Sales (Current)' in df_combined.columns:
-            df_combined['Gross Margin (%)'] = np.where(df_combined['Gross Sales (Current)'] > 0, (df_combined['Gross Margin (Current)'] / df_combined['Gross Sales (Current)']) * 100, 0.0)
+            df_combined['Gross Profit (%)'] = np.where(
+                df_combined['Gross Sales (Current)'] > 0, 
+                (df_combined['Gross Profit (Current)'] / df_combined['Gross Sales (Current)']) * 100, 
+                np.where(df_combined['Gross Profit (Current)'] < 0, -100.0, 0.0)
+            )
 
         if 'Contribution Margin (%)' not in df_combined.columns and 'Contribution Margin (Current)' in df_combined.columns and 'Gross Sales (Current)' in df_combined.columns:
-            df_combined['Contribution Margin (%)'] = np.where(df_combined['Gross Sales (Current)'] > 0, (df_combined['Contribution Margin (Current)'] / df_combined['Gross Sales (Current)']) * 100, 0.0)
+            df_combined['Contribution Margin (%)'] = np.where(
+                df_combined['Gross Sales (Current)'] > 0, 
+                (df_combined['Contribution Margin (Current)'] / df_combined['Gross Sales (Current)']) * 100, 
+                np.where(df_combined['Contribution Margin (Current)'] < 0, -100.0, 0.0)
+            )
 
         return df_combined
     except Exception as e:
@@ -312,7 +342,7 @@ def main():
     if uploaded_file is None:
         st.stop()
 
-    # Load and preserve the raw data universally
+    # Load and preserve the raw data universally (Cache has been destroyed!)
     df_raw = load_9box_data(uploaded_file)
 
     if df_raw.empty:
@@ -438,7 +468,8 @@ def main():
             bubble_size_selector = st.selectbox(
                 "Bubble Size Metric:",
                 ["Gross Sales (Current)", "Gross Profit (Current)", "Gross Margin (Current)",
-                 "Contribution Margin (Current)", "Qty (Current)"]
+                 "Contribution Margin (Current)", "Qty (Current)"],
+                index=4 # Default diubah ke Qty (Current) agar sesuai ekspektasi
             )
 
         with col5:
@@ -703,10 +734,11 @@ def main():
                 'X_Plot': False,
                 'Y_Plot': False,
                 'Bubble_Size': False,
-                bubble_size_selector: ':,.0f'
+                bubble_size_selector: ':,.0f' if 'Qty' in bubble_size_selector else 'Rp {:,.0f}'
             }
 
-            if 'Qty (Current)' in plot_df.columns: hover_data_dict['Qty (Current)'] = ':,.0f'
+            if 'Qty (Current)' in plot_df.columns and bubble_size_selector != 'Qty (Current)': 
+                hover_data_dict['Qty (Current)'] = ':,.0f'
 
             fig = px.scatter(
                 plot_df,
@@ -1101,7 +1133,7 @@ def main():
                         )
 
                     fig_pareto = go.Figure()
-                    
+
                     # Logika warna bar Pareto: Hitam untuk SKU Commonized, Merah untuk Minus, Biru untuk Normal
                     bar_colors = []
                     for i, row in df_pareto_filtered.iterrows():
@@ -1110,13 +1142,13 @@ def main():
                             matches = filtered_df[filtered_df[name_col] == row[name_col]]
                             if not matches.empty:
                                 npm = str(matches.iloc[0]['New Product Name'])
-                        
+
                         if npm.startswith('C-'):
-                            bar_colors.append('#000000') # Warna Hitam Pekat untuk SKU Commonized
+                            bar_colors.append('#000000')  # Warna Hitam Pekat untuk SKU Commonized
                         elif row[chart_margin_col] < 0:
-                            bar_colors.append('#c03d32') # Merah
+                            bar_colors.append('#c03d32')  # Merah
                         else:
-                            bar_colors.append('#38bdf8') # Biru
+                            bar_colors.append('#38bdf8')  # Biru
 
                     fig_pareto.add_trace(go.Bar(
                         x=df_pareto_filtered[name_col],
@@ -1232,7 +1264,8 @@ def main():
                             # Override the color for Commonized SKUs to Black
                             plot_df_p['Plot_Color_Category'] = plot_df_p['Dynamic 9-Box Category']
                             if 'New Product Name' in plot_df_p.columns:
-                                mask_commonized_p = plot_df_p['New Product Name'].fillna('').astype(str).str.startswith('C-')
+                                mask_commonized_p = plot_df_p['New Product Name'].fillna('').astype(str).str.startswith(
+                                    'C-')
                                 plot_df_p.loc[mask_commonized_p, 'Plot_Color_Category'] = 'Commonized SKU (Black)'
 
                             hover_data_dict_p = hover_data_dict.copy()
@@ -1281,7 +1314,8 @@ def main():
                                     fig_p.add_annotation(
                                         x=coords['x'],
                                         y=coords['y'],
-                                        ax=mapped_x_high + (mapped_plot_x_max - mapped_x_high) * 0.05 if is_b5 else None,
+                                        ax=mapped_x_high + (
+                                                    mapped_plot_x_max - mapped_x_high) * 0.05 if is_b5 else None,
                                         ay=mid_y_low if is_b5 else None,
                                         axref="x" if is_b5 else None,
                                         ayref="y" if is_b5 else None,
@@ -1413,8 +1447,9 @@ def main():
 
         df_intersect = filtered_df[box3_mask].copy()
 
-        if 'Gross Sales (Current)' in df_intersect.columns:
-            df_intersect['Bubble_Size'] = df_intersect['Gross Sales (Current)'].fillna(0).abs().replace(0, 1)
+        # DYNAMIC BUBBLE SIZE UNTUK INTERSECTION CHART
+        if bubble_size_selector in df_intersect.columns:
+            df_intersect['Bubble_Size'] = pd.to_numeric(df_intersect[bubble_size_selector], errors='coerce').fillna(0).abs().replace(0, 1)
         else:
             df_intersect['Bubble_Size'] = 10
 
@@ -1449,9 +1484,19 @@ def main():
                     mask_c = df_local_intersect['New Product Name'].fillna('').astype(str).str.startswith('C-')
                     df_local_intersect.loc[mask_c, 'Plot_Color_Category'] = 'Commonized SKU (Black)'
 
+                hover_data_int_local = {
+                    'Source_Sheet': True if 'Source_Sheet' in df_local_intersect.columns else False,
+                    'Plot_Color_Category': False,
+                    col_y_pct: ':.2f',
+                    col_x_pct: ':.2f',
+                    'Bubble_Size': False,
+                    bubble_size_selector: ':,.0f' if 'Qty' in bubble_size_selector else 'Rp {:,.0f}'
+                }
+
                 fig_local = px.scatter(
                     df_local_intersect, x=col_x_pct, y=col_y_pct,
                     size="Bubble_Size", color="Plot_Color_Category", hover_name="Product Name",
+                    hover_data=hover_data_int_local,
                     color_discrete_map={'Normal SKU': '#38bdf8', 'Commonized SKU (Black)': '#000000'},
                     title=f"Box 3 Intersection: {metric_x} vs {metric_y} (Local) | Total: {total_local_skus} SKUs",
                     size_max=50, render_mode="svg"
@@ -1504,9 +1549,19 @@ def main():
                     mask_c = df_export_intersect['New Product Name'].fillna('').astype(str).str.startswith('C-')
                     df_export_intersect.loc[mask_c, 'Plot_Color_Category'] = 'Commonized SKU (Black)'
 
+                hover_data_int_export = {
+                    'Source_Sheet': True if 'Source_Sheet' in df_export_intersect.columns else False,
+                    'Plot_Color_Category': False,
+                    col_y_pct: ':.2f',
+                    col_x_pct: ':.2f',
+                    'Bubble_Size': False,
+                    bubble_size_selector: ':,.0f' if 'Qty' in bubble_size_selector else 'Rp {:,.0f}'
+                }
+
                 fig_export = px.scatter(
                     df_export_intersect, x=col_x_pct, y=col_y_pct,
                     size="Bubble_Size", color="Plot_Color_Category", hover_name="Product Name",
+                    hover_data=hover_data_int_export,
                     color_discrete_map={'Normal SKU': '#38bdf8', 'Commonized SKU (Black)': '#000000'},
                     title=f"Box 3 Intersection: {metric_x} vs {metric_y} (Export) | Total: {total_export_skus} SKUs",
                     size_max=50, render_mode="svg"
