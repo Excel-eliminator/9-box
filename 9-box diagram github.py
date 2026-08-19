@@ -19,7 +19,6 @@ st.set_page_config(page_title="Unified 9-Box Margin Analysis", layout="wide")
 # ==========================================
 # DATA LOADING FUNCTIONS
 # ==========================================
-# @st.cache_data -> DIHAPUS agar Streamlit selalu membaca data dari awal (100% fresh, no stubborn cache)
 def load_9box_data(file_path):
     try:
         xls = pd.ExcelFile(file_path)
@@ -42,53 +41,54 @@ def load_9box_data(file_path):
             if col in df_combined.columns:
                 df_combined[col] = pd.to_numeric(df_combined[col], errors='coerce').fillna(0)
 
+        # Pastikan kolom Remark2 eksis walau di data lama belum ada
+        if 'Remark2' not in df_combined.columns:
+            df_combined['Remark2'] = ''
+
         # Explicitly cast categorical/text fields to STRING to prevent Excel number conversion
-        text_cols = ['SKU', 'Product Name', 'New Code', 'New Product Name', 'Remark', 'Status', 'Country']
+        text_cols = ['SKU', 'Product Name', 'New Code', 'New Product Name', 'Remark', 'Remark2', 'Status', 'Country']
         for col in text_cols:
             if col in df_combined.columns:
                 df_combined[col] = df_combined[col].fillna('').astype(str)
 
         # --- MENGHITUNG NILAI YANG TIDAK ADA DI EXCEL ---
-        
-        # 1. Hitung Gross Margin (Current) & Gross Margin (%) karena tidak ada di raw data
-        # Rumus: Sales + Return (karena return sudah minus) - COGS - Royalty
-        if all(col in df_combined.columns for col in ['Gross Sales (Current)', 'Return (Current)', 'COGS_Regular (Current)', 'Royalty (Current)']):
+        if all(col in df_combined.columns for col in
+               ['Gross Sales (Current)', 'Return (Current)', 'COGS_Regular (Current)', 'Royalty (Current)']):
             df_combined['Gross Margin (Current)'] = (
-                df_combined['Gross Sales (Current)'] + 
-                df_combined['Return (Current)'] - 
-                df_combined['COGS_Regular (Current)'] - 
-                df_combined['Royalty (Current)']
+                    df_combined['Gross Sales (Current)'] +
+                    df_combined['Return (Current)'] -
+                    df_combined['COGS_Regular (Current)'] -
+                    df_combined['Royalty (Current)']
             )
-            
+
             df_combined['Gross Margin (%)'] = np.where(
                 df_combined['Gross Sales (Current)'] > 0,
                 (df_combined['Gross Margin (Current)'] / df_combined['Gross Sales (Current)']) * 100,
                 np.where(df_combined['Gross Margin (Current)'] < 0, -100.0, 0.0)
             )
 
-        # 2. Hitung Qty Growth (%)
         if 'Qty Growth (%)' not in df_combined.columns:
             if 'Qty (Current)' in df_combined.columns and 'Qty (Previous)' in df_combined.columns:
                 df_combined['Qty Growth (%)'] = np.where(
                     df_combined['Qty (Previous)'] != 0,
-                    ((df_combined['Qty (Current)'] - df_combined['Qty (Previous)']) / df_combined['Qty (Previous)'].abs()) * 100,
+                    ((df_combined['Qty (Current)'] - df_combined['Qty (Previous)']) / df_combined[
+                        'Qty (Previous)'].abs()) * 100,
                     0.0
                 )
             else:
                 df_combined['Qty Growth (%)'] = 0.0
 
-        # 3. Hitung persentase untuk GP dan CM jika belum ada di excel
         if 'Gross Profit (%)' not in df_combined.columns and 'Gross Profit (Current)' in df_combined.columns and 'Gross Sales (Current)' in df_combined.columns:
             df_combined['Gross Profit (%)'] = np.where(
-                df_combined['Gross Sales (Current)'] > 0, 
-                (df_combined['Gross Profit (Current)'] / df_combined['Gross Sales (Current)']) * 100, 
+                df_combined['Gross Sales (Current)'] > 0,
+                (df_combined['Gross Profit (Current)'] / df_combined['Gross Sales (Current)']) * 100,
                 np.where(df_combined['Gross Profit (Current)'] < 0, -100.0, 0.0)
             )
 
         if 'Contribution Margin (%)' not in df_combined.columns and 'Contribution Margin (Current)' in df_combined.columns and 'Gross Sales (Current)' in df_combined.columns:
             df_combined['Contribution Margin (%)'] = np.where(
-                df_combined['Gross Sales (Current)'] > 0, 
-                (df_combined['Contribution Margin (Current)'] / df_combined['Gross Sales (Current)']) * 100, 
+                df_combined['Gross Sales (Current)'] > 0,
+                (df_combined['Contribution Margin (Current)'] / df_combined['Gross Sales (Current)']) * 100,
                 np.where(df_combined['Contribution Margin (Current)'] < 0, -100.0, 0.0)
             )
 
@@ -106,10 +106,13 @@ def render_9box_summary_grid(df, margin_type, margin_val_col, y_low_thresh, y_hi
     abbr = "GP" if margin_type == "Gross Profit" else ("GM" if margin_type == "Gross Margin" else "CM")
 
     def get_box_html(b_name, bg_color):
+        if 'Dynamic 9-Box Category' not in df.columns:
+            return f'<div class="box {bg_color}"><div class="box-title">{b_name}</div><div class="box-main">0</div></div>'
+
         sub = df[df['Dynamic 9-Box Category'].str.startswith(b_name)]
         cnt = len(sub)
-        sales = sub['Gross Sales (Current)'].sum()
-        margin = sub[margin_val_col].sum()
+        sales = sub['Gross Sales (Current)'].sum() if 'Gross Sales (Current)' in sub.columns else 0
+        margin = sub[margin_val_col].sum() if margin_val_col in sub.columns else 0
         qty = sub['Qty (Current)'].sum() if 'Qty (Current)' in sub.columns else 0
 
         pct = (margin / sales * 100) if sales > 0 else 0
@@ -314,6 +317,39 @@ def create_portfolio_presentation(df_main, margin_type, margin_val_col):
 
 
 # ==========================================
+# GLOBAL HELPER FUNCTION FOR EXPORT
+# ==========================================
+def get_raw_excel(df_in):
+    df_out = df_in.drop(
+        columns=['Bubble_Size', 'X_Plot', 'Y_Plot', 'Plot_Color_Category', 'Dynamic 9-Box Category', 'Venn_Box'],
+        errors='ignore').copy()
+
+    text_cols = ['SKU', 'Product Name', 'New Code', 'New Product Name', 'Remark', 'Remark2', 'Status', 'Country',
+                 'Source_Sheet']
+    for col in text_cols:
+        if col in df_out.columns:
+            df_out[col] = df_out[col].astype(str)
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df_out.to_excel(writer, index=False, sheet_name='Export_Data')
+        worksheet = writer.sheets['Export_Data']
+        for col in worksheet.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = (max_length + 2)
+            worksheet.column_dimensions[column].width = adjusted_width
+
+    return buffer.getvalue()
+
+
+# ==========================================
 # MAIN APPLICATION LOGIC
 # ==========================================
 def main():
@@ -342,7 +378,6 @@ def main():
     if uploaded_file is None:
         st.stop()
 
-    # Load and preserve the raw data universally (Cache has been destroyed!)
     df_raw = load_9box_data(uploaded_file)
 
     if df_raw.empty:
@@ -368,31 +403,25 @@ def main():
         help="Switch to 'Common' to group data by Master SKU. Choose 'Commonized Only' for merged items, or 'Uncommonized Only' to see the original granular details of those merged items."
     )
 
-    # Grouping Logic for "Common" and "Commonized Only" views (PENGELOMPOKAN SAJA, FILTER ISOLASI DILAKUKAN DI AKHIR)
     if view_mode in ["Common (Consolidated Master SKUs)", "Commonized Only (Master C- Prefix SKUs)"]:
         if 'New Code' in df_main.columns and 'New Product Name' in df_main.columns:
             df_main['New Code'] = df_main['New Code'].astype(str)
             df_main['New Product Name'] = df_main['New Product Name'].astype(str)
 
-            # Columns required for grouping
             group_cols = ['Source_Sheet', 'New Code', 'New Product Name']
 
-            # Identify numeric columns for summation
             num_cols = df_main.select_dtypes(include=[np.number]).columns.tolist()
             sum_cols = [c for c in num_cols if not c.endswith('(%)')]
 
             agg_dict = {c: 'sum' for c in sum_cols}
 
-            # Carry over categorical columns
-            cat_cols = ['Remark', 'Status', 'Country']
+            cat_cols = ['Remark', 'Remark2', 'Status', 'Country']
             for cat in cat_cols:
                 if cat in df_main.columns:
                     agg_dict[cat] = lambda x: next(iter(x.dropna()), '')
 
-            # Execute dynamic GroupBy
             df_main = df_main.groupby(group_cols, as_index=False).agg(agg_dict)
 
-            # Re-calculate Percentages based on summed values
             if 'Qty (Current)' in df_main.columns and 'Qty (Previous)' in df_main.columns:
                 df_main['Qty Growth (%)'] = np.where(
                     df_main['Qty (Previous)'] != 0,
@@ -410,13 +439,12 @@ def main():
                                                            np.where(df_main['Gross Margin (Current)'] < 0, -100.0, 0.0))
                 if 'Contribution Margin (Current)' in df_main.columns:
                     df_main['Contribution Margin (%)'] = np.where(sales > 0, (
-                                df_main['Contribution Margin (Current)'] / sales) * 100,
+                            df_main['Contribution Margin (Current)'] / sales) * 100,
                                                                   np.where(df_main['Contribution Margin (Current)'] < 0,
                                                                            -100.0, 0.0))
 
-            # Replace Product Name with Master Name
             df_main['Product Name'] = df_main['New Product Name']
-            
+
         else:
             st.warning("⚠️ Columns 'New Code' and 'New Product Name' are missing in the uploaded dataset.")
 
@@ -424,7 +452,7 @@ def main():
 
     tab_main_matrix, tab_b3_intersection, tab_progress = st.tabs([
         "📈 MAIN 9-BOX ANALYSIS",
-        "⚠️ BOX 3 DEEP DIVE",
+        "📊 VENN DIAGRAM INFOGRAPHIC",
         "📉 RATIONALIZATION PROGRESS"
     ])
 
@@ -462,7 +490,7 @@ def main():
                 "Bubble Size Metric:",
                 ["Gross Sales (Current)", "Gross Profit (Current)", "Gross Margin (Current)",
                  "Contribution Margin (Current)", "Qty (Current)"],
-                index=4 # Default Qty (Current)
+                index=4
             )
 
         with col5:
@@ -543,7 +571,6 @@ def main():
                 help="Set ke 1.0 untuk melihat grafik asli (bisa gepeng jika ada outlier). Set < 1.0 (misal 0.2 atau 0.1) untuk mengecilkan visual box kanan (B7,8,9) agar box kiri dan tengah mendapat porsi ruang layar lebih luas tanpa menyembunyikan SKU apa pun."
             )
 
-        # MENGHITUNG THRESHOLD BERDASARKAN POPULASI INDUK (BELUM DI-ISOLASI)
         if not filtered_df.empty:
             positive_df = filtered_df[filtered_df[margin_val_col] >= 0]
             total_sales_pos = positive_df['Gross Sales (Current)'].sum()
@@ -599,9 +626,8 @@ def main():
             st.info(
                 "💡 **INFO:** Sumbu X dan Y menggunakan nilai Rata-Rata sebagai titik tengah mutlak. Garis Rata-rata ditandai dengan warna Merah. Garis Threshold Atas dan Bawah otomatis disesuaikan secara simetris terhadap Rata-rata.")
 
-            # HASH KEY UNTUK MENGAKALI CACHE FORM INPUT (MENGGUNAKAN PARENT VIEW)
-            # Ini memastikan kalau user toggle ke "Only", input batas manual dari parent tetap terbaca sempurna
-            parent_view_mode = "Common" if view_mode in ["Common (Consolidated Master SKUs)", "Commonized Only (Master C- Prefix SKUs)"] else "Uncommon"
+            parent_view_mode = "Common" if view_mode in ["Common (Consolidated Master SKUs)",
+                                                         "Commonized Only (Master C- Prefix SKUs)"] else "Uncommon"
             filter_state_str = f"{parent_view_mode}_{market_filter}_{margin_selector}_{x_axis_selector}_{remark_filter}_{status_filter}_{sku_search}_{min_outlier_limit_x}"
             form_key_suffix = hashlib.md5(filter_state_str.encode('utf-8')).hexdigest()
 
@@ -609,13 +635,17 @@ def main():
 
             col_tx1, col_tx2, col_ty1, col_ty2 = st.columns(4)
             with col_tx1:
-                x_low_thresh_input = st.number_input(f"X-Axis Low to Med", value=float(def_x_low), step=step_x_input, key=f"xl_{form_key_suffix}")
+                x_low_thresh_input = st.number_input(f"X-Axis Low to Med", value=float(def_x_low), step=step_x_input,
+                                                     key=f"xl_{form_key_suffix}")
             with col_tx2:
-                x_high_thresh_input = st.number_input(f"X-Axis Med to High", value=float(def_x_high), step=step_x_input, key=f"xh_{form_key_suffix}")
+                x_high_thresh_input = st.number_input(f"X-Axis Med to High", value=float(def_x_high), step=step_x_input,
+                                                      key=f"xh_{form_key_suffix}")
             with col_ty1:
-                y_low_thresh_input = st.number_input("Y-Axis Low to Med (%)", value=float(def_y_low), step=1.0, key=f"yl_{form_key_suffix}")
+                y_low_thresh_input = st.number_input("Y-Axis Low to Med (%)", value=float(def_y_low), step=1.0,
+                                                     key=f"yl_{form_key_suffix}")
             with col_ty2:
-                y_high_thresh_input = st.number_input("Y-Axis Med to High (%)", value=float(def_y_high), step=1.0, key=f"yh_{form_key_suffix}")
+                y_high_thresh_input = st.number_input("Y-Axis Med to High (%)", value=float(def_y_high), step=1.0,
+                                                      key=f"yh_{form_key_suffix}")
 
             run_thresholds = st.form_submit_button("▶ RUN & UPDATE MATRIX", type="primary")
 
@@ -644,7 +674,6 @@ def main():
             b8_id = f'Box 8 (Med Margin, {x_lbl_high})'
             b9_id = f'Box 9 (Low Margin, {x_lbl_high})'
 
-            # PENENTUAN KATEGORI BOX 1-9 DILAKUKAN SEBELUM FILTER ISOLASI
             conditions_9box = [
                 (filtered_df[y_col] > y_high_thresh) & (filtered_df[x_col] < x_low_thresh),
                 (filtered_df[y_col] >= y_low_thresh) & (filtered_df[y_col] <= y_high_thresh) & (
@@ -670,15 +699,12 @@ def main():
                 conditions_9box, choices_9box, default=b6_id
             )
 
-            # ==========================================
-            # THE MAGIC: ISOLATION FILTER (MIRRORING)
-            # ==========================================
-            # Diterapkan SETELAH sumbu, batas outlier, rata-rata, dan kategori Box dihitung oleh Parent!
             if view_mode == "Commonized Only (Master C- Prefix SKUs)":
                 filtered_df = filtered_df[filtered_df['Product Name'].fillna('').astype(str).str.startswith('C-')]
             elif view_mode == "Uncommonized Only (Granular C- Prefix SKUs)":
                 if 'New Product Name' in filtered_df.columns:
-                    filtered_df = filtered_df[filtered_df['New Product Name'].fillna('').astype(str).str.startswith('C-')]
+                    filtered_df = filtered_df[
+                        filtered_df['New Product Name'].fillna('').astype(str).str.startswith('C-')]
 
             render_9box_summary_grid(filtered_df, margin_selector, margin_val_col, y_low_thresh, y_high_thresh,
                                      x_axis_selector, x_low_thresh, x_high_thresh)
@@ -702,7 +728,6 @@ def main():
             name_col = 'Product Name' if 'Product Name' in plot_df.columns else (
                 'SKU' if 'SKU' in plot_df.columns else plot_df.columns[0])
 
-            # Color Configuration (Adding Black for Commonized SKUs)
             color_discrete_map = {
                 b1_id: '#3871b6', b4_id: '#3871b6', b7_id: '#319b5e',
                 b8_id: '#319b5e', b2_id: '#d89f0e', b5_id: '#d89f0e',
@@ -710,7 +735,6 @@ def main():
                 'Commonized SKU (Black)': '#000000'
             }
 
-            # Map the Box colors first, then override Commonized SKUs to Black
             plot_df['Plot_Color_Category'] = plot_df['Dynamic 9-Box Category']
             if 'New Product Name' in plot_df.columns:
                 mask_commonized = plot_df['New Product Name'].fillna('').astype(str).str.startswith('C-')
@@ -734,7 +758,7 @@ def main():
 
             hover_data_dict = {
                 'Source_Sheet': True if 'Source_Sheet' in plot_df.columns else False,
-                'Dynamic 9-Box Category': True, 
+                'Dynamic 9-Box Category': True,
                 'Plot_Color_Category': False,
                 y_col: ':.2f',
                 x_col: x_format,
@@ -744,7 +768,7 @@ def main():
                 bubble_size_selector: ':,.0f' if 'Qty' in bubble_size_selector else 'Rp {:,.0f}'
             }
 
-            if 'Qty (Current)' in plot_df.columns and bubble_size_selector != 'Qty (Current)': 
+            if 'Qty (Current)' in plot_df.columns and bubble_size_selector != 'Qty (Current)':
                 hover_data_dict['Qty (Current)'] = ':,.0f'
 
             fig = px.scatter(
@@ -779,7 +803,6 @@ def main():
                           annotation_text=f"AVG Y ({avg_margin_pct:.1f}%)", annotation_position="top right",
                           annotation_font_color="red")
 
-            # BOUNDARY MATI KUTU BERDASARKAN PARENT DATAFRAME
             mapped_plot_x_min = apply_custom_x_scale(plot_x_min)
             mapped_plot_x_max = apply_custom_x_scale(plot_x_max)
             mapped_x_low = apply_custom_x_scale(x_low_thresh)
@@ -890,70 +913,6 @@ def main():
             })
 
             # ---------------------------------------------------------
-            # NEW: 9-BOX INTERACTIVE QUICK EXPORT GRID
-            # ---------------------------------------------------------
-            st.markdown("---")
-            st.subheader("📥 Interactive 9-Box Quick Export")
-            st.info("💡 **Quick Action:** Klik tombol di bawah ini untuk langsung men-download isi dari masing-masing Box. Angka finansial diekspor murni sebagai *Raw Numbers* (agar bisa di-SUM di Excel), sementara kode produk dan teks lainnya dijamin aman sebagai String.")
-            
-            def get_raw_excel(df_in):
-                # Buang kolom teknis dari Plotly agar rapi persis seperti tabel "Data Detail & Export"
-                df_out = df_in.drop(columns=['Bubble_Size', 'X_Plot', 'Y_Plot', 'Plot_Color_Category', 'Dynamic 9-Box Category'], errors='ignore').copy()
-                
-                # Pastikan kolom bertipe teks tetap dibaca string oleh Excel (mencegah auto-convert kode produk jadi angka)
-                text_cols = ['SKU', 'Product Name', 'New Code', 'New Product Name', 'Remark', 'Status', 'Country', 'Source_Sheet']
-                for col in text_cols:
-                    if col in df_out.columns:
-                        df_out[col] = df_out[col].astype(str)
-                
-                buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    df_out.to_excel(writer, index=False, sheet_name='Box_Export')
-                    
-                    # Auto-adjust column width for neatness di Excel
-                    worksheet = writer.sheets['Box_Export']
-                    for col in worksheet.columns:
-                        max_length = 0
-                        column = col[0].column_letter
-                        for cell in col:
-                            try:
-                                if len(str(cell.value)) > max_length:
-                                    max_length = len(str(cell.value))
-                            except:
-                                pass
-                        adjusted_width = (max_length + 2)
-                        worksheet.column_dimensions[column].width = adjusted_width
-                        
-                return buffer.getvalue()
-
-            grid_col1, grid_col2, grid_col3 = st.columns(3)
-            grid_col4, grid_col5, grid_col6 = st.columns(3)
-            grid_col7, grid_col8, grid_col9 = st.columns(3)
-
-            boxes_layout = [
-                (grid_col1, b1_id, "Box 1"), (grid_col2, b4_id, "Box 4"), (grid_col3, b7_id, "Box 7"),
-                (grid_col4, b2_id, "Box 2"), (grid_col5, b5_id, "Box 5"), (grid_col6, b8_id, "Box 8"),
-                (grid_col7, b3_id, "Box 3"), (grid_col8, b6_id, "Box 6"), (grid_col9, b9_id, "Box 9")
-            ]
-
-            for col, box_id, label in boxes_layout:
-                box_df = filtered_df[filtered_df['Dynamic 9-Box Category'] == box_id].copy()
-                count = len(box_df)
-                with col:
-                    if count > 0:
-                        excel_data = get_raw_excel(box_df)
-                        st.download_button(
-                            label=f"📥 Download {label} ({count} SKUs)",
-                            data=excel_data,
-                            file_name=f"Export_{label.replace(' ', '')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
-                    else:
-                        st.button(f"📥 {label} (0 SKUs)", disabled=True, use_container_width=True)
-
-
-            # ---------------------------------------------------------
             # DATA DETAIL TABLE & EXPORT
             # ---------------------------------------------------------
             st.markdown("---")
@@ -961,7 +920,8 @@ def main():
             with col_hdr1:
                 st.subheader("📋 Data Detail & Export")
 
-            display_df = filtered_df.drop(columns=['Bubble_Size', 'X_Plot', 'Y_Plot', 'Plot_Color_Category'], errors='ignore')
+            display_df = filtered_df.drop(columns=['Bubble_Size', 'X_Plot', 'Y_Plot', 'Plot_Color_Category'],
+                                          errors='ignore')
 
             buffer_excel_main = io.BytesIO()
             with pd.ExcelWriter(buffer_excel_main, engine='openpyxl') as writer:
@@ -1034,27 +994,48 @@ def main():
             # PARETO ANALYSIS MODULE
             # ---------------------------------------------------------
             st.markdown("---")
-            col_p_title, col_p_chart_metric, col_p_slider = st.columns([1.2, 1.4, 1.8])
+            col_p1, col_p2, col_p3, col_p4, col_p5 = st.columns([1, 1, 1.2, 1.2, 1.5])
 
-            with col_p_title:
+            with col_p1:
                 st.subheader("📊 Pareto Analysis")
 
-            with col_p_chart_metric:
+            with col_p2:
+                pareto_market_filter = st.selectbox(
+                    "Market Focus:",
+                    ["ALL (Local + Export)", "LOCAL", "EXPORT"],
+                    key="pareto_market",
+                    help="Saring hasil Pareto berdasarkan Market."
+                )
+
+            with col_p3:
                 chart_margin_label = st.selectbox(
                     "Pilih Metric untuk Grafik:",
                     ["Gross Sales", "Gross Profit", "Gross Margin", "Contribution Margin"],
                     help="SKU diurutkan dari yang paling besar ke paling kecil berdasarkan metric ini."
                 )
 
-            with col_p_slider:
+            with col_p4:
+                pareto_box_options = ["ALL"] + [f"Box {i}" for i in range(1, 10)]
+                pareto_box_filter = st.multiselect(
+                    "Filter 9-Box Position:",
+                    pareto_box_options,
+                    default=["ALL"],
+                    help="Pilih kuadran spesifik untuk membatasi populasi yang masuk ke dalam Pareto."
+                )
+
+            with col_p5:
                 pareto_threshold = st.slider(
                     "Pareto Threshold (% SKU)",
                     min_value=1.0,
                     max_value=100.0,
                     value=80.0,
                     step=1.0,
-                    help="Berbasis JUMLAH SKU (bukan cumulative value). Contoh: 80% dari 100 SKU = 80 SKU teratas (diurutkan besar ke kecil) berdasarkan metric margin yang dipilih."
+                    help="Dihitung dari total populasi GLOBAL. Setelah mendapatkan Top %, baru di-slice sesuai pilihan Market Focus."
                 )
+
+            # --- LOGIKA PARETO: KONSISTENSI DATA (POST-FILTERING) ---
+            # 1. EVALUASI GLOBAL (Tanpa Filter Market & Box)
+            df_for_pareto_base = filtered_df.copy()
 
             chart_margin_map = {
                 "Gross Sales": "Gross Sales (Current)",
@@ -1068,33 +1049,61 @@ def main():
                                'Contribution Margin (Current)']
             agg_cols = [chart_margin_col]
             for c in ['Qty (Current)'] + margin_cols_all:
-                if c in filtered_df.columns and c not in agg_cols:
+                if c in df_for_pareto_base.columns and c not in agg_cols:
                     agg_cols.append(c)
 
-            if chart_margin_col in filtered_df.columns:
-                df_pareto = filtered_df.groupby(name_col)[agg_cols].sum().reset_index()
-                df_pareto = df_pareto.sort_values(by=chart_margin_col, ascending=False).reset_index(drop=True)
+            if chart_margin_col in df_for_pareto_base.columns:
+                df_pareto_global = df_for_pareto_base.groupby(name_col)[agg_cols].sum().reset_index()
+                df_pareto_global = df_pareto_global.sort_values(by=chart_margin_col, ascending=False).reset_index(
+                    drop=True)
 
-                if 'Dynamic 9-Box Category' in filtered_df.columns:
-                    box_category_map = filtered_df.groupby(name_col)['Dynamic 9-Box Category'].agg(
+                total_all_skus_global = len(df_pareto_global)
+                if pareto_threshold >= 100:
+                    cutoff_count_global = total_all_skus_global
+                else:
+                    cutoff_count_global = max(1, round(total_all_skus_global * pareto_threshold / 100))
+
+                # INI DIA MASTER SKU PARETO (Top Global "Foto Awal")
+                top_global_skus = df_pareto_global.iloc[:cutoff_count_global][name_col].tolist()
+
+                # 2. APLIKASIKAN MARKET & 9-BOX FILTER SEBAGAI SLICER
+                df_sliced = df_for_pareto_base.copy()
+
+                if pareto_market_filter != "ALL (Local + Export)":
+                    if 'Source_Sheet' in df_sliced.columns:
+                        df_sliced = df_sliced[df_sliced['Source_Sheet'] == pareto_market_filter]
+
+                if "ALL" not in pareto_box_filter and len(pareto_box_filter) > 0:
+                    box_pattern = '|'.join([f"^{b}" for b in pareto_box_filter])
+                    df_sliced = df_sliced[
+                        df_sliced['Dynamic 9-Box Category'].str.contains(box_pattern, regex=True, na=False)]
+
+                # Base populasi khusus slicer (untuk ngitung denominator %)
+                total_sliced_skus_base = df_sliced[name_col].nunique()
+                base_sliced_sales = df_sliced[
+                    'Gross Sales (Current)'].sum() if 'Gross Sales (Current)' in df_sliced.columns else 0
+
+                # Hanya ambil data hasil slicer yang JUGA merupakan anggota Top Global SKUs
+                df_pareto_raw_filtered = df_sliced[df_sliced[name_col].isin(top_global_skus)].copy()
+
+                # 3. GROUPING FINAL UNTUK DISPLAY
+                df_pareto_filtered = df_pareto_raw_filtered.groupby(name_col)[agg_cols].sum().reset_index()
+                df_pareto_filtered = df_pareto_filtered.sort_values(by=chart_margin_col, ascending=False).reset_index(
+                    drop=True)
+
+                if 'Dynamic 9-Box Category' in df_for_pareto_base.columns:
+                    box_category_map = df_for_pareto_base.groupby(name_col)['Dynamic 9-Box Category'].agg(
                         lambda s: s.iloc[0] if s.nunique() == 1 else f"Mixed ({s.nunique()} box)"
                     )
-                    df_pareto['9-Box Kwadran'] = df_pareto[name_col].map(box_category_map)
+                    df_pareto_filtered['9-Box Kwadran'] = df_pareto_filtered[name_col].map(box_category_map)
 
-                if not df_pareto.empty:
-                    total_val = df_pareto[chart_margin_col].sum()
+                if not df_pareto_filtered.empty:
+                    total_val = df_pareto_filtered[chart_margin_col].sum()
                     if total_val != 0:
-                        df_pareto['Cumulative %'] = (df_pareto[chart_margin_col].cumsum() / total_val) * 100
+                        df_pareto_filtered['Cumulative %'] = (df_pareto_filtered[
+                                                                  chart_margin_col].cumsum() / total_val) * 100
                     else:
-                        df_pareto['Cumulative %'] = 0.0
-
-                    total_all_skus = len(df_pareto)
-
-                    if pareto_threshold >= 100:
-                        cutoff_count = total_all_skus
-                    else:
-                        cutoff_count = max(1, round(total_all_skus * pareto_threshold / 100))
-                    df_pareto_filtered = df_pareto.iloc[:cutoff_count].copy()
+                        df_pareto_filtered['Cumulative %'] = 0.0
 
                     total_pareto_skus = len(df_pareto_filtered)
 
@@ -1104,15 +1113,19 @@ def main():
                     summary_sales = df_pareto_filtered[
                         'Gross Sales (Current)'].sum() if 'Gross Sales (Current)' in df_pareto_filtered.columns else 0
 
-                    pct_sku = (summary_sku / total_all_skus * 100) if total_all_skus > 0 else 0
-                    pct_sales = (summary_sales / filtered_df[
-                        'Gross Sales (Current)'].sum() * 100) if 'Gross Sales (Current)' in filtered_df.columns and \
-                                                                 filtered_df['Gross Sales (Current)'].sum() > 0 else 0
+                    pct_sku = (summary_sku / total_sliced_skus_base * 100) if total_sliced_skus_base > 0 else 0
+                    pct_sales = (summary_sales / base_sliced_sales * 100) if base_sliced_sales > 0 else 0
 
                     m1, m2, m3 = st.columns(3)
-                    m1.metric("Jumlah SKU", f"{summary_sku:,}", f"{pct_sku:.1f}% dari {total_all_skus:,} SKU")
+
+                    if pareto_market_filter == "ALL (Local + Export)" and "ALL" in pareto_box_filter:
+                        txt_sku = f"↑ {pareto_threshold:.1f}% dari {total_all_skus_global:,} SKU Global"
+                    else:
+                        txt_sku = f"↑ {summary_sku:,} Sliced SKU (dari {cutoff_count_global:,} Top Global)"
+
+                    m1.metric("Jumlah SKU", f"{summary_sku:,}", txt_sku)
                     m2.metric("Quantity", f"{summary_qty:,.0f}")
-                    m3.metric("Gross Sales", f"Rp {summary_sales:,.0f}", f"{pct_sales:.1f}% dari total")
+                    m3.metric("Gross Sales", f"Rp {summary_sales:,.0f}", f"↑ {pct_sales:.1f}% dari total slice")
 
                     margin_label_map = {
                         'Gross Profit (Current)': 'Gross Profit',
@@ -1127,7 +1140,7 @@ def main():
                         if margin_col not in df_pareto_filtered.columns:
                             continue
                         margin_sum = df_pareto_filtered[margin_col].sum()
-                        grand_total = filtered_df[margin_col].sum() if margin_col in filtered_df.columns else 0
+                        grand_total = df_sliced[margin_col].sum() if margin_col in df_sliced.columns else 0
                         cumulative_pct = (margin_sum / grand_total * 100) if grand_total > 0 else 0
                         margin_ratio_pct = (margin_sum / summary_sales * 100) if summary_sales > 0 else 0
                         label = margin_label_map[margin_col]
@@ -1142,21 +1155,20 @@ def main():
 
                     fig_pareto = go.Figure()
 
-                    # Logika warna bar Pareto: Hitam untuk SKU Commonized, Merah untuk Minus, Biru untuk Normal
                     bar_colors = []
                     for i, row in df_pareto_filtered.iterrows():
                         npm = ""
-                        if 'New Product Name' in filtered_df.columns:
-                            matches = filtered_df[filtered_df[name_col] == row[name_col]]
+                        if 'New Product Name' in df_for_pareto_base.columns:
+                            matches = df_for_pareto_base[df_for_pareto_base[name_col] == row[name_col]]
                             if not matches.empty:
                                 npm = str(matches.iloc[0]['New Product Name'])
 
                         if npm.startswith('C-'):
-                            bar_colors.append('#000000')  # Warna Hitam Pekat untuk SKU Commonized
+                            bar_colors.append('#000000')
                         elif row[chart_margin_col] < 0:
-                            bar_colors.append('#c03d32')  # Merah
+                            bar_colors.append('#c03d32')
                         else:
-                            bar_colors.append('#38bdf8')  # Biru
+                            bar_colors.append('#38bdf8')
 
                     fig_pareto.add_trace(go.Bar(
                         x=df_pareto_filtered[name_col],
@@ -1176,7 +1188,7 @@ def main():
                     ))
 
                     fig_pareto.update_layout(
-                        title=f"Pareto Chart: {chart_margin_label} (Top {pareto_threshold}% SKU by count | {total_pareto_skus} dari {total_all_skus} SKUs, diurutkan besar ke kecil)",
+                        title=f"Pareto Chart: {chart_margin_label} (Slice dari Top {pareto_threshold}% Global | {total_pareto_skus} SKUs)",
                         hovermode="x unified",
                         height=550,
                         xaxis=dict(showticklabels=False, title=f"SKUs (Ranked by {chart_margin_label})"),
@@ -1220,16 +1232,13 @@ def main():
                         hide_index=True
                     )
 
-                    # =========================================================
-                    # TAMBAHAN: 9-BOX DIAGRAM (MATRIX & BUBBLE) UNTUK HASIL PARETO
-                    # =========================================================
                     st.markdown("---")
                     st.subheader(f"🧩 9-Box Summary untuk Top {pareto_threshold}% Pareto SKUs")
                     st.info(
                         "Visualisasi di bawah ini (Matrix Grid & Bubble Chart) menunjukkan sebaran 9-box khusus untuk SKU yang masuk dalam filter Pareto di atas.")
 
                     pareto_sku_list = df_pareto_filtered[name_col].tolist()
-                    df_pareto_9box = filtered_df[filtered_df[name_col].isin(pareto_sku_list)].copy()
+                    df_pareto_9box = df_pareto_raw_filtered.copy()
 
                     if not df_pareto_9box.empty:
                         tab_p_matrix, tab_p_bubble = st.tabs(["🧮 Matrix Grid", "🫧 Bubble Chart"])
@@ -1246,13 +1255,27 @@ def main():
                                 x_high_thresh
                             )
 
-                            st.download_button(
-                                label="📥 Download Matrix Grid (.html)",
-                                data=html_matrix_pareto,
-                                file_name=f"Pareto_9Box_Matrix_{margin_selector.replace(' ', '_')}.html",
-                                mime="text/html",
-                                type="secondary"
-                            )
+                            st.markdown("##### 📥 Export Pareto 9-Box Data")
+                            col_dl_mat1, col_dl_mat2 = st.columns(2)
+                            with col_dl_mat1:
+                                st.download_button(
+                                    label="📥 Download Matrix Grid (.html)",
+                                    data=html_matrix_pareto,
+                                    file_name=f"Pareto_9Box_Matrix_{margin_selector.replace(' ', '_')}.html",
+                                    mime="text/html",
+                                    type="secondary",
+                                    use_container_width=True
+                                )
+                            with col_dl_mat2:
+                                excel_pareto_9box = get_raw_excel(df_pareto_9box)
+                                st.download_button(
+                                    label=f"📥 Download Data 9-Box Top {pareto_threshold}% (Excel)",
+                                    data=excel_pareto_9box,
+                                    file_name=f"Pareto_9Box_Top{pareto_threshold}_{chart_margin_label.replace(' ', '')}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    type="primary",
+                                    use_container_width=True
+                                )
 
                         with tab_p_bubble:
                             plot_df_p = df_pareto_9box.copy()
@@ -1269,7 +1292,6 @@ def main():
                             plot_df_p['X_Plot'] = plot_df_p[x_col].apply(apply_custom_x_scale)
                             plot_df_p['Y_Plot'] = plot_df_p[y_col]
 
-                            # Override the color for Commonized SKUs to Black
                             plot_df_p['Plot_Color_Category'] = plot_df_p['Dynamic 9-Box Category']
                             if 'New Product Name' in plot_df_p.columns:
                                 mask_commonized_p = plot_df_p['New Product Name'].fillna('').astype(str).str.startswith(
@@ -1323,7 +1345,7 @@ def main():
                                         x=coords['x'],
                                         y=coords['y'],
                                         ax=mapped_x_high + (
-                                                    mapped_plot_x_max - mapped_x_high) * 0.05 if is_b5 else None,
+                                                mapped_plot_x_max - mapped_x_high) * 0.05 if is_b5 else None,
                                         ay=mid_y_low if is_b5 else None,
                                         axref="x" if is_b5 else None,
                                         ayref="y" if is_b5 else None,
@@ -1412,207 +1434,343 @@ def main():
                 st.error(f"Metric '{chart_margin_label}' not available in the dataset.")
 
     # ---------------------------------------------------------
-    # TAB 2: BOX 3 INTERSECTION (DYNAMIC COMPARISON)
+    # TAB 2: VENN DIAGRAM INFOGRAPHIC (4-LEAF CLOVER)
     # ---------------------------------------------------------
     with tab_b3_intersection:
-        st.markdown("### 🎚️ Intersection Settings & Thresholds")
+        st.markdown("### 📊 Strategic Portfolio Intersection (4-Set Venn Analysis)")
         st.info(
-            "Dynamically compare any two margin metrics to identify SKUs that fall into 'Box 3' (Low Margin, Low Growth) for BOTH metrics simultaneously. Data is seamlessly derived from the Master P&L (Tab 1).")
+            "💡 **Executive Infographic (4-Leaf Clover):** Temukan irisan presisi dari 4 Kriteria Utama. Pilih **'None'** jika ingin mengecualikan/mematikan salah satu lingkaran dari analisa irisan.")
 
-        with st.form("intersection_settings_form"):
-            col_x_int, col_y_int = st.columns(2)
+        with st.form("venn_settings_form"):
+            st.markdown("#### 🎯 Global & Venn Filters")
 
-            with col_x_int:
-                metric_x = st.selectbox("Select Metric 1 (X-Axis):",
-                                        ["Gross Profit", "Gross Margin", "Contribution Margin"], index=1)
-                col_x_low, col_x_high = st.columns(2)
-                with col_x_low:
-                    x_low_med = st.number_input(f"{metric_x} - Low to Med Threshold (%)", value=25.0, step=1.0)
-                with col_x_high:
-                    x_med_high = st.number_input(f"{metric_x} - Med to High Threshold (%)", value=40.0, step=1.0)
+            col_g1, col_g2, col_g3 = st.columns(3)
+            with col_g1:
+                v_market = st.selectbox("Global Filter: Market Focus", ["ALL", "LOCAL", "EXPORT"],
+                                        help="Saring populasi awal berdasarkan Market.", key="venn_market")
+            with col_g2:
+                v_margin_selector = st.selectbox("Y-Axis Metric (Margin):",
+                                                 ["Gross Profit", "Gross Margin", "Contribution Margin"],
+                                                 key="venn_margin")
+            with col_g3:
+                v_x_axis_selector = st.selectbox("X-Axis Metric (Performance):",
+                                                 ["Gross Sales (Current)", "Qty Growth (%)"], key="venn_xaxis")
 
-            with col_y_int:
-                metric_y = st.selectbox("Select Metric 2 (Y-Axis):",
-                                        ["Gross Profit", "Gross Margin", "Contribution Margin"], index=2)
-                col_y_low, col_y_high = st.columns(2)
-                with col_y_low:
-                    y_low_med = st.number_input(f"{metric_y} - Low to Med Threshold (%)", value=10.0, step=1.0)
-                with col_y_high:
-                    y_med_high = st.number_input(f"{metric_y} - Med to High Threshold (%)", value=25.0, step=1.0)
+            col_v1, col_v2, col_v3, col_v4 = st.columns(4)
 
-            run_intersect = st.form_submit_button("▶ RUN INTERSECTION", type="primary")
+            with col_v1:
+                v_newcode = st.selectbox("Set A: Commonization", ["ALL", "None", "Commonized SKU", "Others"],
+                                         help="Tipe SKU berdasarkan awalan 'C-'")
 
-        col_x_pct = f"{metric_x} (%)"
-        col_x_amt = f"{metric_x} (Current)"
-        col_y_pct = f"{metric_y} (%)"
-        col_y_amt = f"{metric_y} (Current)"
+            with col_v2:
+                if 'Remark' in df_main.columns:
+                    valid_rem1 = sorted(
+                        [str(x) for x in df_main['Remark'].unique() if pd.notna(x) and str(x).strip() != ''])
+                    rem1_options = ["ALL", "None"] + valid_rem1
+                else:
+                    rem1_options = ["ALL", "None"]
+                v_remark = st.multiselect("Set B: Plan Discontinue", rem1_options, default=["ALL"])
 
-        box3_mask = (
-                (filtered_df['Qty Growth (%)'] < 0) &
-                (filtered_df[col_x_pct] < x_low_med) &
-                (filtered_df[col_y_pct] < y_low_med)
-        )
+            with col_v3:
+                if 'Remark2' in df_main.columns:
+                    valid_rem2 = sorted(
+                        [str(x) for x in df_main['Remark2'].unique() if pd.notna(x) and str(x).strip() != ''])
+                    rem2_options = ["ALL", "None"] + valid_rem2 + ["Kosong (Blank)"]
+                else:
+                    rem2_options = ["ALL", "None", "McK", "Kosong (Blank)"]
+                v_remark2 = st.selectbox("Set C: McKinsey Project", rem2_options)
 
-        df_intersect = filtered_df[box3_mask].copy()
+            with col_v4:
+                box_list = ["ALL", "None"] + [f"Box {i}" for i in range(1, 10)]
+                v_box = st.multiselect("Set D: 9-Box Position", box_list, default=["ALL"])
 
-        # DYNAMIC BUBBLE SIZE UNTUK INTERSECTION CHART
-        if bubble_size_selector in df_intersect.columns:
-            df_intersect['Bubble_Size'] = pd.to_numeric(df_intersect[bubble_size_selector], errors='coerce').fillna(0).abs().replace(0, 1)
+            run_venn = st.form_submit_button("▶ GENERATE 4-LEAF CLOVER INFOGRAPHIC", type="primary")
+
+        # --- LOGIKA FILTER VENN ---
+        df_v = df_main.copy()
+        if v_market != "ALL":
+            df_v = df_v[df_v['Source_Sheet'] == v_market]
+
+        if v_margin_selector == "Gross Profit":
+            y_col_v = 'Gross Profit (%)'
+            margin_val_col_v = 'Gross Profit (Current)'
+        elif v_margin_selector == "Gross Margin":
+            y_col_v = 'Gross Margin (%)'
+            margin_val_col_v = 'Gross Margin (Current)'
         else:
-            df_intersect['Bubble_Size'] = 10
+            y_col_v = 'Contribution Margin (%)'
+            margin_val_col_v = 'Contribution Margin (Current)'
 
-        df_local_intersect = df_intersect[df_intersect['Source_Sheet'] == 'LOCAL']
-        df_export_intersect = df_intersect[df_intersect['Source_Sheet'] == 'EXPORT']
+        x_col_v = v_x_axis_selector
 
-        sub_tab_local, sub_tab_export = st.tabs(["🏙️ LOCAL MARKET (Intersection)", "🌍 EXPORT MARKET (Intersection)"])
+        if not df_v.empty:
+            positive_df_v = df_v[df_v[margin_val_col_v] >= 0]
+            total_sales_pos_v = positive_df_v['Gross Sales (Current)'].sum() if not positive_df_v.empty else 0
 
-        base_display_cols = ['Product Name', 'Gross Sales (Current)', 'Qty (Current)', 'Qty Growth (%)',
-                             col_x_amt, col_x_pct, col_y_amt, col_y_pct]
-        display_cols = list(dict.fromkeys(base_display_cols))
+            if total_sales_pos_v > 0:
+                avg_margin_pct_v = (positive_df_v[margin_val_col_v].sum() / total_sales_pos_v) * 100
+            else:
+                avg_margin_pct_v = positive_df_v[y_col_v].mean() if not positive_df_v.empty else 25.0
 
-        format_dict_intersect = {
-            'Gross Sales (Current)': 'Rp {:,.0f}',
-            'Qty (Current)': '{:,.0f}',
-            'Qty Growth (%)': '{:.2f}%',
-            col_x_amt: 'Rp {:,.0f}',
-            col_x_pct: '{:.2f}%',
-            col_y_amt: 'Rp {:,.0f}',
-            col_y_pct: '{:.2f}%'
-        }
+            if pd.isna(avg_margin_pct_v) or avg_margin_pct_v <= 0: avg_margin_pct_v = 1.0
 
-        with sub_tab_local:
-            if not df_local_intersect.empty:
-                total_local_skus = len(df_local_intersect)
-                st.info(
-                    f"**Insight:** Found **{total_local_skus}** SKUs in the Local Market classified as 'Box 3' under both {metric_x} and {metric_y}.")
+            v_y_low = avg_margin_pct_v * (2.0 / 3.0)
+            v_y_high = avg_margin_pct_v * (4.0 / 3.0)
 
-                # Terapkan warna hitam untuk Commonized SKU
-                df_local_intersect['Plot_Color_Category'] = 'Normal SKU'
-                if 'New Product Name' in df_local_intersect.columns:
-                    mask_c = df_local_intersect['New Product Name'].fillna('').astype(str).str.startswith('C-')
-                    df_local_intersect.loc[mask_c, 'Plot_Color_Category'] = 'Commonized SKU (Black)'
+            avg_x_v = df_v[x_col_v].mean() if not df_v.empty else 100.0
+            if pd.isna(avg_x_v) or avg_x_v <= 0: avg_x_v = 100.0
+            v_x_low = avg_x_v * (2.0 / 3.0)
+            v_x_high = avg_x_v * (4.0 / 3.0)
 
-                hover_data_int_local = {
-                    'Source_Sheet': True if 'Source_Sheet' in df_local_intersect.columns else False,
-                    'Plot_Color_Category': False,
-                    col_y_pct: ':.2f',
-                    col_x_pct: ':.2f',
-                    'Bubble_Size': False,
-                    bubble_size_selector: ':,.0f' if 'Qty' in bubble_size_selector else 'Rp {:,.0f}'
-                }
+            c_box_v = [
+                (df_v[y_col_v] > v_y_high) & (df_v[x_col_v] < v_x_low),
+                (df_v[y_col_v] >= v_y_low) & (df_v[y_col_v] <= v_y_high) & (df_v[x_col_v] < v_x_low),
+                (df_v[y_col_v] < v_y_low) & (df_v[x_col_v] < v_x_low),
+                (df_v[y_col_v] > v_y_high) & (df_v[x_col_v] >= v_x_low) & (df_v[x_col_v] <= v_x_high),
+                (df_v[y_col_v] >= v_y_low) & (df_v[y_col_v] <= v_y_high) & (df_v[x_col_v] >= v_x_low) & (
+                            df_v[x_col_v] <= v_x_high),
+                (df_v[y_col_v] < v_y_low) & (df_v[x_col_v] >= v_x_low) & (df_v[x_col_v] <= v_x_high),
+                (df_v[y_col_v] > v_y_high) & (df_v[x_col_v] > v_x_high),
+                (df_v[y_col_v] >= v_y_low) & (df_v[y_col_v] <= v_y_high) & (df_v[x_col_v] > v_x_high),
+                (df_v[y_col_v] < v_y_low) & (df_v[x_col_v] > v_x_high)
+            ]
+            choices_v = [f"Box {i}" for i in [1, 2, 3, 4, 5, 6, 7, 8, 9]]
+            df_v['Dynamic 9-Box Category'] = np.select(c_box_v, choices_v, default="Box 6")
+            df_v['Venn_Box'] = df_v['Dynamic 9-Box Category']
 
-                fig_local = px.scatter(
-                    df_local_intersect, x=col_x_pct, y=col_y_pct,
-                    size="Bubble_Size", color="Plot_Color_Category", hover_name="Product Name",
-                    hover_data=hover_data_int_local,
-                    color_discrete_map={'Normal SKU': '#38bdf8', 'Commonized SKU (Black)': '#000000'},
-                    title=f"Box 3 Intersection: {metric_x} vs {metric_y} (Local) | Total: {total_local_skus} SKUs",
-                    size_max=50, render_mode="svg"
+            # SET A (Commonization)
+            setA = pd.Series(True, index=df_v.index)
+            if v_newcode == "None":
+                setA = pd.Series(False, index=df_v.index)
+            elif v_newcode == "Commonized SKU":
+                setA = df_v['New Product Name'].fillna('').astype(str).str.startswith('C-')
+            elif v_newcode == "Others":
+                setA = ~df_v['New Product Name'].fillna('').astype(str).str.startswith('C-')
+
+            # SET B (Plan Discontinue / Remark)
+            setB = pd.Series(True, index=df_v.index)
+            if "None" in v_remark:
+                setB = pd.Series(False, index=df_v.index)
+            else:
+                actual_remarks_v = [r for r in v_remark if r not in ["ALL", "None"]]
+                if actual_remarks_v:
+                    setB = df_v['Remark'].astype(str).isin(actual_remarks_v)
+
+            # SET C (McKinsey Project / Remark2)
+            setC = pd.Series(True, index=df_v.index)
+            if v_remark2 == "None":
+                setC = pd.Series(False, index=df_v.index)
+            elif v_remark2 == "Kosong (Blank)":
+                setC = (df_v['Remark2'].astype(str).str.strip() == '')
+            elif v_remark2 != "ALL":
+                setC = (df_v['Remark2'].astype(str).str.strip().str.upper() == v_remark2.upper())
+
+            # SET D (9-Box Position)
+            setD = pd.Series(True, index=df_v.index)
+            if "None" in v_box:
+                setD = pd.Series(False, index=df_v.index)
+            else:
+                if "ALL" not in v_box and len(v_box) > 0:
+                    setD = df_v['Venn_Box'].isin(v_box)
+
+            # --- MENGHITUNG MASK IRISAN (V1 - V15) ---
+            m_A_only = setA & ~setB & ~setC & ~setD
+            m_B_only = ~setA & setB & ~setC & ~setD
+            m_C_only = ~setA & ~setB & setC & ~setD
+            m_D_only = ~setA & ~setB & ~setC & setD
+
+            m_AB_only = setA & setB & ~setC & ~setD
+            m_AC_only = setA & ~setB & setC & ~setD
+            m_AD_only = setA & ~setB & ~setC & setD
+            m_BC_only = ~setA & setB & setC & ~setD
+            m_BD_only = ~setA & setB & ~setC & setD
+            m_CD_only = ~setA & ~setB & setC & setD
+
+            m_ABC_only = setA & setB & setC & ~setD
+            m_ABD_only = setA & setB & ~setC & setD
+            m_ACD_only = setA & ~setB & setC & setD
+            m_BCD_only = ~setA & setB & setC & setD
+
+            m_ABCD = setA & setB & setC & setD
+
+            def get_venn_label(bidang, mask):
+                cnt = mask.sum()
+                if cnt == 0: return ""
+                sales = df_v.loc[mask, 'Gross Sales (Current)'].sum()
+                return f"<b>{bidang}</b><br>{cnt} SKUs<br>Rp {sales / 1e9:,.1f} Bn"
+
+            st.markdown("---")
+            st.markdown("#### 🎯 4-Leaf Clover Venn Diagram Infographic")
+
+            # GAMBAR 4-LEAF CLOVER VENN (REVERT KE ELIPS/LINGKARAN)
+            fig_venn = go.Figure()
+
+            # Dynamic Transparent Colors Logic
+            c_A_fill = "rgba(0,0,0,0)" if v_newcode == "None" else "rgba(15, 118, 110, 0.3)"
+            c_A_line = "rgba(0,0,0,0)" if v_newcode == "None" else "#0f766e"
+
+            c_B_fill = "rgba(0,0,0,0)" if "None" in v_remark else "rgba(217, 119, 6, 0.3)"
+            c_B_line = "rgba(0,0,0,0)" if "None" in v_remark else "#d97706"
+
+            c_C_fill = "rgba(0,0,0,0)" if v_remark2 == "None" else "rgba(30, 58, 138, 0.3)"
+            c_C_line = "rgba(0,0,0,0)" if v_remark2 == "None" else "#1e3a8a"
+
+            c_D_fill = "rgba(0,0,0,0)" if "None" in v_box else "rgba(22, 163, 74, 0.3)"
+            c_D_line = "rgba(0,0,0,0)" if "None" in v_box else "#16a34a"
+
+            # Circles Rendering (membentuk Elips visual)
+            fig_venn.add_shape(type="circle", x0=1.5, y0=3.5, x1=6.5, y1=8.5, fillcolor=c_A_fill, line_color=c_A_line,
+                               line_width=3)
+            fig_venn.add_shape(type="circle", x0=3.5, y0=3.5, x1=8.5, y1=8.5, fillcolor=c_B_fill, line_color=c_B_line,
+                               line_width=3)
+            fig_venn.add_shape(type="circle", x0=3.5, y0=1.5, x1=8.5, y1=6.5, fillcolor=c_C_fill, line_color=c_C_line,
+                               line_width=3)
+            fig_venn.add_shape(type="circle", x0=1.5, y0=1.5, x1=6.5, y1=6.5, fillcolor=c_D_fill, line_color=c_D_line,
+                               line_width=3)
+
+            # Title Formatting
+            lbl_A_text = "None" if v_newcode == "None" else v_newcode
+            lbl_B_text = "None" if "None" in v_remark else (', '.join(v_remark) if 'ALL' not in v_remark else 'ALL')
+            lbl_C_text = "None" if v_remark2 == "None" else v_remark2
+            lbl_D_text = "None" if "None" in v_box else (', '.join(v_box) if 'ALL' not in v_box else 'ALL')
+
+            lbl_A = f"Commonization<br>({lbl_A_text})"
+            lbl_B = f"Plan Discontinue<br>({lbl_B_text})"
+            lbl_C = f"McKinsey Project<br>({lbl_C_text})"
+            lbl_D = f"9-Box Position<br>({lbl_D_text})"
+
+            # Title Injection
+            if v_newcode != "None":
+                fig_venn.add_annotation(x=2.5, y=9.2, text=f"<b>{lbl_A}</b>", showarrow=False,
+                                        font=dict(size=14, color="#0f766e"))
+            if "None" not in v_remark:
+                fig_venn.add_annotation(x=7.5, y=9.2, text=f"<b>{lbl_B}</b>", showarrow=False,
+                                        font=dict(size=14, color="#d97706"))
+            if v_remark2 != "None":
+                fig_venn.add_annotation(x=7.5, y=0.8, text=f"<b>{lbl_C}</b>", showarrow=False,
+                                        font=dict(size=14, color="#1e3a8a"))
+            if "None" not in v_box:
+                fig_venn.add_annotation(x=2.5, y=0.8, text=f"<b>{lbl_D}</b>", showarrow=False,
+                                        font=dict(size=14, color="#16a34a"))
+
+            # V1 to V15 Labels (Clover Layout)
+            annotations = [
+                (2.5, 7.5, "V1", m_A_only),
+                (7.5, 7.5, "V2", m_B_only),
+                (7.5, 2.5, "V3", m_C_only),
+                (2.5, 2.5, "V4", m_D_only),
+                (5.0, 7.8, "V5", m_AB_only),
+                (2.2, 5.0, "V7", m_AD_only),
+                (7.8, 5.0, "V8", m_BC_only),
+                (5.0, 2.2, "V10", m_CD_only),
+                (5.8, 5.8, "V11", m_ABC_only),
+                (4.2, 5.8, "V12", m_ABD_only),
+                (4.2, 4.2, "V13", m_ACD_only),
+                (5.8, 4.2, "V14", m_BCD_only),
+            ]
+
+            for ax_x, ax_y, bid, m in annotations:
+                txt = get_venn_label(bid, m)
+                if txt:
+                    fig_venn.add_annotation(x=ax_x, y=ax_y, text=txt, showarrow=False,
+                                            font=dict(size=12, color="black"))
+
+            bullseye_label = get_venn_label('', m_ABCD)
+            if bullseye_label != "":
+                fig_venn.add_annotation(x=5.0, y=5.0,
+                                        text=f"<span style='color:red;'><b>V15<br>(BULLSEYE)</b></span><br>{bullseye_label.replace('<b></b><br>', '')}",
+                                        showarrow=False, font=dict(size=13, color="black"))
+
+            # MENGATASI AREA V6 & V9 YANG TERTUMPUK: Menggunakan Garis Penunjuk (Arrow)
+            v6_text = get_venn_label("V6", m_AC_only)
+            if v6_text != "":
+                fig_venn.add_annotation(
+                    x=5.0, y=5.0, ax=1.5, ay=5.0, axref="x", ayref="y",
+                    text=v6_text, showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.5, arrowcolor="#0f766e",
+                    font=dict(size=12, color="black")
                 )
 
-                fig_local.add_vline(x=x_low_med, line_dash="dash", line_color="black", line_width=1, opacity=0.5,
-                                    annotation_text=f"{metric_x} Low-Med ({x_low_med:g}%)")
-                fig_local.add_vline(x=x_med_high, line_dash="dash", line_color="black", line_width=1, opacity=0.5)
-                fig_local.add_hline(y=y_low_med, line_dash="dash", line_color="black", line_width=1, opacity=0.5,
-                                    annotation_text=f"{metric_y} Low-Med ({y_low_med:g}%)")
-                fig_local.add_hline(y=y_med_high, line_dash="dash", line_color="black", line_width=1, opacity=0.5)
-                fig_local.add_vline(x=0, line_dash="dash", line_color="red", line_width=2, opacity=0.5)
-                fig_local.add_hline(y=0, line_dash="dash", line_color="red", line_width=2, opacity=0.5)
-
-                fig_local.update_layout(height=550, hovermode="closest", showlegend=True, margin=dict(t=50, b=50))
-                st.plotly_chart(fig_local, use_container_width=True,
-                                config={'displayModeBar': True, 'displaylogo': False})
-
-                st.markdown("### 📋 Intersection Detail (Local)")
-
-                valid_display_cols = [c for c in display_cols if c in df_local_intersect.columns]
-                df_local_display = df_local_intersect[valid_display_cols].copy()
-
-                buffer_local = io.BytesIO()
-                with pd.ExcelWriter(buffer_local, engine='openpyxl') as writer:
-                    df_local_display.to_excel(writer, index=False, sheet_name='Local_Intersection')
-
-                col_dl_local, _ = st.columns([1, 3])
-                with col_dl_local:
-                    st.download_button("📥 Download Local Intersection Data (Excel)", data=buffer_local.getvalue(),
-                                       file_name='Box3_Intersection_Local.xlsx',
-                                       mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                                       type="primary", use_container_width=True)
-
-                st.dataframe(df_local_display.style.format(format_dict_intersect), use_container_width=True,
-                             hide_index=True)
-            else:
-                st.warning(
-                    f"No SKUs found in the Local Market that fit the 'Box 3' criteria for both {metric_x} and {metric_y}.")
-
-        with sub_tab_export:
-            if not df_export_intersect.empty:
-                total_export_skus = len(df_export_intersect)
-                st.info(
-                    f"**Insight:** Found **{total_export_skus}** SKUs in the Export Market classified as 'Box 3' under both {metric_x} and {metric_y}.")
-
-                # Terapkan warna hitam untuk Commonized SKU
-                df_export_intersect['Plot_Color_Category'] = 'Normal SKU'
-                if 'New Product Name' in df_export_intersect.columns:
-                    mask_c = df_export_intersect['New Product Name'].fillna('').astype(str).str.startswith('C-')
-                    df_export_intersect.loc[mask_c, 'Plot_Color_Category'] = 'Commonized SKU (Black)'
-
-                hover_data_int_export = {
-                    'Source_Sheet': True if 'Source_Sheet' in df_export_intersect.columns else False,
-                    'Plot_Color_Category': False,
-                    col_y_pct: ':.2f',
-                    col_x_pct: ':.2f',
-                    'Bubble_Size': False,
-                    bubble_size_selector: ':,.0f' if 'Qty' in bubble_size_selector else 'Rp {:,.0f}'
-                }
-
-                fig_export = px.scatter(
-                    df_export_intersect, x=col_x_pct, y=col_y_pct,
-                    size="Bubble_Size", color="Plot_Color_Category", hover_name="Product Name",
-                    hover_data=hover_data_int_export,
-                    color_discrete_map={'Normal SKU': '#38bdf8', 'Commonized SKU (Black)': '#000000'},
-                    title=f"Box 3 Intersection: {metric_x} vs {metric_y} (Export) | Total: {total_export_skus} SKUs",
-                    size_max=50, render_mode="svg"
+            v9_text = get_venn_label("V9", m_BD_only)
+            if v9_text != "":
+                fig_venn.add_annotation(
+                    x=5.0, y=5.0, ax=8.5, ay=5.0, axref="x", ayref="y",
+                    text=v9_text, showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.5, arrowcolor="#d97706",
+                    font=dict(size=12, color="black")
                 )
 
-                fig_export.add_vline(x=x_low_med, line_dash="dash", line_color="black", line_width=1, opacity=0.5,
-                                     annotation_text=f"{metric_x} Low-Med ({x_low_med:g}%)")
-                fig_export.add_vline(x=x_med_high, line_dash="dash", line_color="black", line_width=1, opacity=0.5)
-                fig_export.add_hline(y=y_low_med, line_dash="dash", line_color="black", line_width=1, opacity=0.5,
-                                     annotation_text=f"{metric_y} Low-Med ({y_low_med:g}%)")
-                fig_export.add_hline(y=y_med_high, line_dash="dash", line_color="black", line_width=1, opacity=0.5)
-                fig_export.add_vline(x=0, line_dash="dash", line_color="red", line_width=2, opacity=0.5)
-                fig_export.add_hline(y=0, line_dash="dash", line_color="red", line_width=2, opacity=0.5)
+            fig_venn.update_xaxes(visible=False, range=[0, 10])
+            fig_venn.update_yaxes(visible=False, range=[0, 10])
+            fig_venn.update_layout(height=650, plot_bgcolor='white', margin=dict(t=30, b=30, l=30, r=30))
 
-                fig_export.update_layout(height=550, hovermode="closest", showlegend=True, margin=dict(t=50, b=50))
-                st.plotly_chart(fig_export, use_container_width=True,
-                                config={'displayModeBar': True, 'displaylogo': False})
+            st.plotly_chart(fig_venn, use_container_width=True)
+            st.caption(
+                "*Catatan Visual: Irisan diagonal V6 (A∩C) dan V9 (B∩D) yang letaknya tersembunyi secara geometri kini ditunjukkan secara presisi menggunakan garis panah ke titik pusat, sehingga jumlah keseluruhan SKU pada grafik dipastikan 100% sama dengan perhitungan manual Anda.*")
 
-                st.markdown("### 📋 Intersection Detail (Export)")
+            # --- TABEL EKSPOR V1 - V15 ---
+            st.markdown("### 📥 Download Area (V1 - V15)")
+            st.info("Download data SKU murni per bidang Diagram Venn untuk di-SUM di Excel.")
 
-                export_cols = [
-                                  'Country'] + base_display_cols if 'Country' in df_export_intersect.columns else base_display_cols
-                export_cols = list(dict.fromkeys(export_cols))
-                valid_export_cols = [c for c in export_cols if c in df_export_intersect.columns]
+            export_grids = st.columns(4)
+            bidang_data = [
+                ("V1 (Set A Only)", m_A_only),
+                ("V2 (Set B Only)", m_B_only),
+                ("V3 (Set C Only)", m_C_only),
+                ("V4 (Set D Only)", m_D_only),
+                ("V5 (V1 ∩ V2)", m_AB_only),
+                ("V6 (V1 ∩ V3)", m_AC_only),
+                ("V7 (V1 ∩ V4)", m_AD_only),
+                ("V8 (V2 ∩ V3)", m_BC_only),
+                ("V9 (V2 ∩ V4)", m_BD_only),
+                ("V10 (V3 ∩ V4)", m_CD_only),
+                ("V11 (V1 ∩ V2 ∩ V3)", m_ABC_only),
+                ("V12 (V1 ∩ V2 ∩ V4)", m_ABD_only),
+                ("V13 (V1 ∩ V3 ∩ V4)", m_ACD_only),
+                ("V14 (V2 ∩ V3 ∩ V4)", m_BCD_only),
+                ("V15 (BULLSEYE: Keempatnya)", m_ABCD),
+            ]
 
-                df_export_display = df_export_intersect[valid_export_cols].copy()
+            for i, (label, mask) in enumerate(bidang_data):
+                col = export_grids[i % 4]
+                sub_df = df_v[mask].copy()
+                cnt = len(sub_df)
+                with col:
+                    if cnt > 0:
+                        excel_data = get_raw_excel(sub_df)
+                        st.download_button(
+                            label=f"📥 {label} ({cnt})",
+                            data=excel_data,
+                            file_name=f"Venn_{label.split(' ')[0]}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                    else:
+                        st.button(f"📥 {label} (0)", disabled=True, use_container_width=True, key=f"btn_venn_{i}")
 
-                buffer_export = io.BytesIO()
-                with pd.ExcelWriter(buffer_export, engine='openpyxl') as writer:
-                    df_export_display.to_excel(writer, index=False, sheet_name='Export_Intersection')
+            st.markdown("---")
+            st.markdown("### 📋 Preview Tabel BULLSEYE (V15)")
 
-                col_dl_export, _ = st.columns([1, 3])
-                with col_dl_export:
-                    st.download_button("📥 Download Export Intersection Data (Excel)", data=buffer_export.getvalue(),
-                                       file_name='Box3_Intersection_Export.xlsx',
-                                       mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                                       type="primary", use_container_width=True)
-
-                st.dataframe(df_export_display.style.format(format_dict_intersect), use_container_width=True,
-                             hide_index=True)
+            df_bullseye = df_v[m_ABCD].copy()
+            if df_bullseye.empty:
+                st.warning("Tidak ada SKU yang memenuhi kriteria BULLSEYE (Irisan V15).")
             else:
-                st.warning(
-                    f"No SKUs found in the Export Market that fit the 'Box 3' criteria for both {metric_x} and {metric_y}.")
+                base_display_cols = ['SKU', 'Product Name', 'New Code', 'New Product Name', 'Remark', 'Remark2',
+                                     'Status', 'Country', 'Source_Sheet', 'Gross Sales (Current)', 'Qty (Current)',
+                                     'Qty Growth (%)', 'Gross Margin (Current)', 'Gross Margin (%)',
+                                     'Contribution Margin (Current)', 'Contribution Margin (%)']
+                display_cols = [c for c in base_display_cols if c in df_bullseye.columns]
+                df_export_bullseye = df_bullseye[display_cols].copy()
+
+                format_dict_venn = {
+                    'Gross Sales (Current)': 'Rp {:,.0f}',
+                    'Qty (Current)': '{:,.0f}',
+                    'Qty Growth (%)': '{:.2f}%',
+                    'Gross Margin (Current)': 'Rp {:,.0f}',
+                    'Gross Margin (%)': '{:.2f}%',
+                    'Contribution Margin (Current)': 'Rp {:,.0f}',
+                    'Contribution Margin (%)': '{:.2f}%'
+                }
+                st.dataframe(df_export_bullseye.style.format(format_dict_venn, na_rep=""), use_container_width=True,
+                             hide_index=True)
 
     # ---------------------------------------------------------
     # TAB 3: RATIONALIZATION PROGRESS MONITOR
@@ -1621,7 +1779,6 @@ def main():
         st.markdown("### 📉 SKU Rationalization Progress Monitor")
 
         # --- PERHITUNGAN DINAMIS DARI SUMBER DATA MENTAH (df_raw) ---
-        # 1. Pastikan P1 dan P2 SELALU dari data UNCOMMON (Original Granular)
         df_uncommon = df_raw.copy()
 
         def get_sum(df, col):
@@ -1633,9 +1790,8 @@ def main():
         p1_gm = get_sum(df_uncommon, 'Gross Margin (Current)')
         p1_cm = get_sum(df_uncommon, 'Contribution Margin (Current)')
 
-        # Phase 2: First Optimization (Uncommon, Filter Exact Remark != Disc & Renewal)
+        # Phase 2: House Keeping In-Active 768 SKU
         if 'Remark' in df_uncommon.columns:
-            # Menggunakan exact match (isin) agar presisi membuang tepat 768 SKU tanpa menyentuh tipe Remark lainnya
             remark_clean = df_uncommon['Remark'].astype(str).str.strip().str.upper()
             mask_exc = remark_clean.isin(['DISC', 'RENEWAL'])
             df_p2 = df_uncommon[~mask_exc]
@@ -1647,37 +1803,66 @@ def main():
         p2_gm = get_sum(df_p2, 'Gross Margin (Current)')
         p2_cm = get_sum(df_p2, 'Contribution Margin (Current)')
 
-        # Phase 3: Current Trim (Status == "Active" AND data harus COMMON/CONSOLIDATED)
-        df_p3_raw = df_uncommon.copy()
-        if 'Status' in df_p3_raw.columns:
-            df_p3_raw = df_p3_raw[df_p3_raw['Status'].astype(str).str.strip().str.upper() == 'ACTIVE']
-
-        # Lakukan commonization (Grouping Master SKU) KHUSUS untuk P3
-        if 'New Code' in df_p3_raw.columns and 'New Product Name' in df_p3_raw.columns:
-            df_p3_raw['New Code'] = df_p3_raw['New Code'].fillna('UNKNOWN').astype(str)
-            df_p3_raw['New Product Name'] = df_p3_raw['New Product Name'].fillna('UNKNOWN').astype(str)
-
-            group_cols_p3 = ['Source_Sheet', 'New Code', 'New Product Name']
-            num_cols_p3 = df_p3_raw.select_dtypes(include=[np.number]).columns.tolist()
-            sum_cols_p3 = [c for c in num_cols_p3 if not c.endswith('(%)')]
-
-            agg_dict_p3 = {c: 'sum' for c in sum_cols_p3}
-            df_p3_common = df_p3_raw.groupby(group_cols_p3, as_index=False).agg(agg_dict_p3)
+        # Phase 3: Discontinue 50 SKU
+        if 'Status' in df_p2.columns:
+            mask_deact = df_p2['Status'].astype(str).str.contains('Deactivated 10-Aug', case=False, na=False)
+            df_p3 = df_p2[~mask_deact]
         else:
-            df_p3_common = df_p3_raw.copy()
+            df_p3 = df_p2.copy()
 
-        p3_sku = len(df_p3_common)
-        p3_sales = get_sum(df_p3_common, 'Gross Sales (Current)')
-        p3_gm = get_sum(df_p3_common, 'Gross Margin (Current)')
-        p3_cm = get_sum(df_p3_common, 'Contribution Margin (Current)')
+        p3_sku = len(df_p3)
+        p3_sales = get_sum(df_p3, 'Gross Sales (Current)')
+        p3_gm = get_sum(df_p3, 'Gross Margin (Current)')
+        p3_cm = get_sum(df_p3, 'Contribution Margin (Current)')
+
+        # Phase 4: Commonized SKU Export from 213 to 81 SKU
+        df_p4_raw = df_uncommon.copy()
+        if 'Status' in df_p4_raw.columns:
+            df_p4_raw = df_p4_raw[df_p4_raw['Status'].astype(str).str.strip().str.upper() == 'ACTIVE']
+
+        if 'New Code' in df_p4_raw.columns and 'New Product Name' in df_p4_raw.columns:
+            df_p4_raw['New Code'] = df_p4_raw['New Code'].fillna('UNKNOWN').astype(str)
+            df_p4_raw['New Product Name'] = df_p4_raw['New Product Name'].fillna('UNKNOWN').astype(str)
+
+            group_cols_p4 = ['Source_Sheet', 'New Code', 'New Product Name']
+            num_cols_p4 = df_p4_raw.select_dtypes(include=[np.number]).columns.tolist()
+            sum_cols_p4 = [c for c in num_cols_p4 if not c.endswith('(%)')]
+
+            agg_dict_p4 = {c: 'sum' for c in sum_cols_p4}
+            df_p4_common = df_p4_raw.groupby(group_cols_p4, as_index=False).agg(agg_dict_p4)
+        else:
+            df_p4_common = df_p4_raw.copy()
+
+        p4_sku = len(df_p4_common)
+        p4_sales = get_sum(df_p4_common, 'Gross Sales (Current)')
+        p4_gm = get_sum(df_p4_common, 'Gross Margin (Current)')
+        p4_cm = get_sum(df_p4_common, 'Contribution Margin (Current)')
+
+        # Phase 5: 90% up Gross Sales, GM and CM
+        if not df_p4_common.empty and 'Gross Sales (Current)' in df_p4_common.columns:
+            cutoff = max(1, round(len(df_p4_common) * 0.45))
+            df_p5 = df_p4_common.sort_values(by='Gross Sales (Current)', ascending=False).head(cutoff)
+        else:
+            df_p5 = df_p4_common.copy()
+
+        p5_sku = len(df_p5)
+        p5_sales = get_sum(df_p5, 'Gross Sales (Current)')
+        p5_gm = get_sum(df_p5, 'Gross Margin (Current)')
+        p5_cm = get_sum(df_p5, 'Contribution Margin (Current)')
 
         # Membangun dataframe murni untuk rendering grafik
         progress_data_numeric = pd.DataFrame({
-            'Phase': ['P1 (Initial Base)', 'P2 (First Optimization)', 'P3 (Current Trim)'],
-            'Jumlah SKU': [p1_sku, p2_sku, p3_sku],
-            'Gross Sales (IDR)': [p1_sales, p2_sales, p3_sales],
-            'Gross Margin (IDR)': [p1_gm, p2_gm, p3_gm],
-            'Contribution Margin (IDR)': [p1_cm, p2_cm, p3_cm]
+            'Phase': [
+                'P1 (Initial Base)',
+                'P2 (House Keeping In-Active 768 SKU)',
+                'P3 (Discontinue 50 SKU)',
+                'P4 (Commonized SKU Export from 213 to 81 SKU)',
+                'P5 (90% up Gross Sales, GM and CM)'
+            ],
+            'Jumlah SKU': [p1_sku, p2_sku, p3_sku, p4_sku, p5_sku],
+            'Gross Sales (IDR)': [p1_sales, p2_sales, p3_sales, p4_sales, p5_sales],
+            'Gross Margin (IDR)': [p1_gm, p2_gm, p3_gm, p4_gm, p5_gm],
+            'Contribution Margin (IDR)': [p1_cm, p2_cm, p3_cm, p4_cm, p5_cm]
         })
 
         # Helper untuk formatting tabel pakai koma sebagai ribuan
@@ -1698,8 +1883,8 @@ def main():
             ["Jumlah SKU", "Gross Sales (IDR)", "Gross Margin (IDR)", "Contribution Margin (IDR)"]
         )
 
-        # Distinct Corporate Palette (Corporate Navy, Executive Amber, Strategy Teal)
-        executive_colors = ['#1e3a8a', '#d97706', '#0f766e']
+        # 5 Warna Eksekutif (Navy, Amber, Teal, Purple, Crimson)
+        executive_colors = ['#1e3a8a', '#d97706', '#0f766e', '#6b21a8', '#be123c']
 
         # Rendering the Chart using Numeric values (Plotly handles the formatting via separators)
         fig_prog = px.bar(
@@ -1737,7 +1922,7 @@ def main():
             ),
             xaxis=dict(
                 showgrid=False, showline=True, linewidth=2, linecolor='#334155',
-                title="", tickfont=dict(size=14, color='#334155', family="Arial")
+                title="", tickfont=dict(size=13, color='#334155', family="Arial")
             ),
             title_font=dict(size=22, color='#0f172a', family="Arial"),
             margin=dict(t=80, b=40, l=40, r=40),
@@ -1746,7 +1931,7 @@ def main():
 
         # Ensure Y-axis range is high enough so outside text doesn't get clipped
         max_y = progress_data_numeric[progress_metric].max()
-        fig_prog.update_yaxes(range=[0, max_y * 1.2])
+        fig_prog.update_yaxes(range=[0, max_y * 1.25])
 
         st.plotly_chart(fig_prog, use_container_width=True)
 
