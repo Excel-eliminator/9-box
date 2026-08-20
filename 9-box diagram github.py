@@ -30,7 +30,6 @@ def load_9box_data(file_path):
 
         df_combined = pd.concat([df_local, df_export], ignore_index=True)
 
-        # Standardize numeric columns (Cast ke numeric, isi 0 jika kosong)
         numeric_cols = [
             'Gross Sales (Current)', 'Return (Current)', 'COGS_Regular (Current)', 'Royalty (Current)',
             'Gross Profit (Current)', 'Contribution Margin (Current)',
@@ -41,17 +40,14 @@ def load_9box_data(file_path):
             if col in df_combined.columns:
                 df_combined[col] = pd.to_numeric(df_combined[col], errors='coerce').fillna(0)
 
-        # Pastikan kolom Remark2 eksis walau di data lama belum ada
         if 'Remark2' not in df_combined.columns:
             df_combined['Remark2'] = ''
 
-        # Explicitly cast categorical/text fields to STRING to prevent Excel number conversion
         text_cols = ['SKU', 'Product Name', 'New Code', 'New Product Name', 'Remark', 'Remark2', 'Status', 'Country']
         for col in text_cols:
             if col in df_combined.columns:
                 df_combined[col] = df_combined[col].fillna('').astype(str)
 
-        # --- MENGHITUNG NILAI YANG TIDAK ADA DI EXCEL ---
         if all(col in df_combined.columns for col in
                ['Gross Sales (Current)', 'Return (Current)', 'COGS_Regular (Current)', 'Royalty (Current)']):
             df_combined['Gross Margin (Current)'] = (
@@ -1082,6 +1078,8 @@ def main():
                 total_sliced_skus_base = df_sliced[name_col].nunique()
                 base_sliced_sales = df_sliced[
                     'Gross Sales (Current)'].sum() if 'Gross Sales (Current)' in df_sliced.columns else 0
+                base_sliced_qty = df_sliced[
+                    'Qty (Current)'].sum() if 'Qty (Current)' in df_sliced.columns else 0
 
                 # Hanya ambil data hasil slicer yang JUGA merupakan anggota Top Global SKUs
                 df_pareto_raw_filtered = df_sliced[df_sliced[name_col].isin(top_global_skus)].copy()
@@ -1115,6 +1113,7 @@ def main():
 
                     pct_sku = (summary_sku / total_sliced_skus_base * 100) if total_sliced_skus_base > 0 else 0
                     pct_sales = (summary_sales / base_sliced_sales * 100) if base_sliced_sales > 0 else 0
+                    pct_qty = (summary_qty / base_sliced_qty * 100) if base_sliced_qty > 0 else 0
 
                     m1, m2, m3 = st.columns(3)
 
@@ -1124,8 +1123,11 @@ def main():
                         txt_sku = f"↑ {summary_sku:,} Sliced SKU (dari {cutoff_count_global:,} Top Global)"
 
                     m1.metric("Jumlah SKU", f"{summary_sku:,}", txt_sku)
-                    m2.metric("Quantity", f"{summary_qty:,.0f}")
-                    m3.metric("Gross Sales", f"Rp {summary_sales:,.0f}", f"↑ {pct_sales:.1f}% dari total slice")
+                    m2.metric("Quantity", f"{summary_qty:,.0f} ({pct_qty:.1f}%)", f"↑ {pct_qty:.1f}% dari total slice")
+
+                    summary_sales_bn = summary_sales / 1e9
+                    m3.metric("Gross Sales", f"Rp {summary_sales_bn:,.1f} M ({pct_sales:.1f}%)",
+                              f"↑ {pct_sales:.1f}% dari total slice")
 
                     margin_label_map = {
                         'Gross Profit (Current)': 'Gross Profit',
@@ -1528,7 +1530,7 @@ def main():
                 (df_v[y_col_v] < v_y_low) & (df_v[x_col_v] < v_x_low),
                 (df_v[y_col_v] > v_y_high) & (df_v[x_col_v] >= v_x_low) & (df_v[x_col_v] <= v_x_high),
                 (df_v[y_col_v] >= v_y_low) & (df_v[y_col_v] <= v_y_high) & (df_v[x_col_v] >= v_x_low) & (
-                            df_v[x_col_v] <= v_x_high),
+                        df_v[x_col_v] <= v_x_high),
                 (df_v[y_col_v] < v_y_low) & (df_v[x_col_v] >= v_x_low) & (df_v[x_col_v] <= v_x_high),
                 (df_v[y_col_v] > v_y_high) & (df_v[x_col_v] > v_x_high),
                 (df_v[y_col_v] >= v_y_low) & (df_v[y_col_v] <= v_y_high) & (df_v[x_col_v] > v_x_high),
